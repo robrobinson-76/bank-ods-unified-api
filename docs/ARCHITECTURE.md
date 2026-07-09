@@ -503,6 +503,8 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - 15 query fields with `skip: Int` on all list operations
 - `DateTime` custom scalar serializes datetime to ISO string
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
+- Query protection via graphql-core validation rules (`graphql/protection.py`): depth limit, root-field/alias cap, and an introspection kill-switch — all env-configurable (see Environment Variables); rejected queries never reach resolvers or MongoDB
+- Contract governance: `tests/test_protection.py` asserts the generated SDL matches the checked-in `tests/schema.snapshot.graphql`, so any schema change shows up as a reviewable diff
 
 #### Side-by-side library evaluation twins — `bank_ods.graphql_strawberry`, `bank_ods.graphql_graphene`
 
@@ -617,6 +619,9 @@ Each HTTP request produces:
 | `DEBUG` | `false` | GraphQL debug mode; `true` exposes stack traces |
 | `LOG_LEVEL` | `INFO` | Python logging level |
 | `MCP_TRANSPORT` | `stdio` | MCP transport: `stdio` (desktop) or `sse` (chatbot/K8s) |
+| `GRAPHQL_MAX_DEPTH` | `10` | Max query selection depth (validation rule; rejected before resolvers run) |
+| `GRAPHQL_MAX_ROOT_FIELDS` | `10` | Max root fields per operation incl. aliases (blocks alias amplification) |
+| `GRAPHQL_INTROSPECTION` | `true` | Set `false` in production to block `__schema`/`__type` queries |
 
 Copy `.env.example` to `.env` before running locally.
 

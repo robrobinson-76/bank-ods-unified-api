@@ -234,8 +234,9 @@ pytest tests/ -v
 | `test_parity.py` | Cross-layer equivalence — REST == GraphQL == service |
 | `test_strawberry_parity.py` | Strawberry twin — 4-way parity, schema introspection match, behavioral diffs |
 | `test_graphene_parity.py` | Graphene twin — same harness against port-8003 implementation |
+| `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
 
-73 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
+82 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
 
 ---
 

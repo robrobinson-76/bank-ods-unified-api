@@ -1,0 +1,200 @@
+scalar DateTime
+
+type StatusHistoryEntry {
+  status: String!
+  timestamp: DateTime!
+}
+
+type Account {
+  accountId: String!
+  accountName: String!
+  accountType: String!
+  clientId: String!
+  clientName: String!
+  baseCurrency: String!
+  status: String!
+  openDate: DateTime!
+  closeDate: DateTime
+  custodianBranch: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type AccountList {
+  count: Int!
+  data: [Account!]!
+}
+
+type Security {
+  securityId: String!
+  isin: String
+  cusip: String
+  ticker: String
+  description: String!
+  assetClass: String!
+  subType: String!
+  currency: String!
+  exchange: String
+  issuer: String!
+  country: String!
+  maturityDate: DateTime
+  couponRate: Float
+  status: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type SecurityList {
+  count: Int!
+  data: [Security!]!
+}
+
+type Transaction {
+  transactionId: String!
+  transactionType: String!
+  tradeDate: DateTime!
+  settlementDate: DateTime!
+  accountId: String!
+  securityId: String
+  quantity: Float
+  price: Float
+  currency: String!
+  grossAmount: Float!
+  fees: Float!
+  netAmount: Float!
+  fxRate: Float!
+  counterpartyId: String!
+  status: String!
+  settlementRef: String
+  sourceSystem: String!
+  internalRef: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type TransactionList {
+  count: Int!
+  data: [Transaction!]!
+}
+
+type Position {
+  positionId: String!
+  accountId: String!
+  securityId: String!
+  asOfDate: DateTime!
+  quantity: Float!
+  currency: String!
+  costBasis: Float!
+  marketPrice: Float!
+  marketValue: Float!
+  unrealizedPnL: Float!
+  positionType: String!
+  snapshotType: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type PositionList {
+  count: Int!
+  data: [Position!]!
+}
+
+type Settlement {
+  settlementId: String!
+  transactionId: String!
+  accountId: String!
+  securityId: String
+  settlementDate: DateTime!
+  deliveryType: String!
+  quantity: Float
+  currency: String!
+  settlementAmount: Float!
+  counterpartyId: String!
+  counterpartyAccount: String!
+  custodianAccount: String!
+  status: String!
+  statusHistory: [StatusHistoryEntry!]!
+  failReason: String
+  csdRef: String
+  swiftRef: String
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type SettlementList {
+  count: Int!
+  data: [Settlement!]!
+}
+
+type CashBalance {
+  balanceId: String!
+  accountId: String!
+  currency: String!
+  asOfDate: DateTime!
+  openingBalance: Float!
+  credits: Float!
+  debits: Float!
+  closingBalance: Float!
+  pendingCredits: Float!
+  pendingDebits: Float!
+  projectedBalance: Float!
+  snapshotType: String!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type CashBalanceList {
+  count: Int!
+  data: [CashBalance!]!
+}
+
+
+type TransactionSummaryItem {
+  transactionType: String!
+  status: String!
+  count: Int!
+  totalNetAmount: Float!
+}
+
+type TransactionSummaryList {
+  count: Int!
+  data: [TransactionSummaryItem!]!
+}
+
+type ProjectedBalance {
+  accountId: String!
+  currency: String!
+  asOfDate: String!
+  closingBalance: Float
+  pendingCredits: Float
+  pendingDebits: Float
+  projectedBalance: Float
+}
+
+
+type Query {
+  # Accounts
+  get_account(accountId: String!): Account
+  list_accounts(clientId: String, status: String, limit: Int, skip: Int): AccountList!
+
+  # Transactions
+  get_transaction(transactionId: String!): Transaction
+  get_transactions(accountId: String!, fromDate: String!, toDate: String!, status: String, transactionType: String, limit: Int, skip: Int): TransactionList!
+  get_transaction_summary(accountId: String!, fromDate: String!, toDate: String!): TransactionSummaryList!
+
+  # Positions
+  get_position(accountId: String!, securityId: String!, asOfDate: String!): Position
+  get_positions(accountId: String!, asOfDate: String!, skip: Int): PositionList!
+  get_position_history(accountId: String!, securityId: String!, fromDate: String!, toDate: String!, skip: Int): PositionList!
+
+  # Settlements
+  get_settlement(settlementId: String!): Settlement
+  get_settlement_status(transactionId: String!): Settlement
+  get_settlements(accountId: String!, settlementDate: String!, status: String, skip: Int): SettlementList!
+  get_settlement_fails(fromDate: String!, toDate: String!, accountId: String, skip: Int): SettlementList!
+
+  # Balances
+  get_cash_balance(accountId: String!, currency: String!, asOfDate: String!): CashBalance
+  get_cash_balances(accountId: String!, asOfDate: String!, skip: Int): CashBalanceList!
+  get_projected_balance(accountId: String!, currency: String!, asOfDate: String!): ProjectedBalance
+}

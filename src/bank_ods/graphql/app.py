@@ -3,9 +3,17 @@ from contextlib import asynccontextmanager
 from ariadne import ScalarType, make_executable_schema
 from ariadne.asgi import GraphQL
 from fastapi import FastAPI
+from graphql.validation import NoSchemaIntrospectionCustomRule
 
-from bank_ods.config import DEBUG, LOG_LEVEL
+from bank_ods.config import (
+    DEBUG,
+    GRAPHQL_INTROSPECTION,
+    GRAPHQL_MAX_DEPTH,
+    GRAPHQL_MAX_ROOT_FIELDS,
+    LOG_LEVEL,
+)
 from bank_ods.db.indexes import ensure_indexes
+from bank_ods.graphql.protection import depth_limit_rule, root_fields_limit_rule
 from bank_ods.graphql.sdl import generate_sdl
 from bank_ods.graphql.resolvers import query
 from bank_ods.logging_config import RequestLoggingMiddleware, configure_logging
@@ -28,7 +36,13 @@ async def lifespan(_app: FastAPI):
 def _build_graphql_app() -> GraphQL:
     type_defs = generate_sdl()
     schema = make_executable_schema(type_defs, query, datetime_scalar)
-    return GraphQL(schema, debug=DEBUG)
+    validation_rules = [
+        depth_limit_rule(GRAPHQL_MAX_DEPTH),
+        root_fields_limit_rule(GRAPHQL_MAX_ROOT_FIELDS),
+    ]
+    if not GRAPHQL_INTROSPECTION:
+        validation_rules.append(NoSchemaIntrospectionCustomRule)
+    return GraphQL(schema, debug=DEBUG, validation_rules=validation_rules)
 
 
 def create_app() -> FastAPI:

@@ -28,6 +28,21 @@ Two common misconceptions this table settles:
 - **There is no "Strawberry v2" with more capabilities.** Strawberry has never shipped 1.0; the high minor number (0.320) reflects release frequency, not maturity guarantees. This evaluation used the newest release that exists.
 - **Graphene is the oldest and historically most popular library, but its cadence has stalled** — no core release in ~19 months, and the Pydantic bridge it depends on has been untouched for ~2.5 years. Betting a new transport layer on packages this quiet is a maintenance risk regardless of technical fit.
 
+## Other contenders — considered but not built, and why
+
+For completeness ("did you look at X?"), the rest of the field, with release dates verified against PyPI on 2026-07-09:
+
+| Contender | Status | Why no side-by-side twin was built |
+|---|---|---|
+| `tartiflette` (Dailymotion) | Last release **Nov 2021** — abandoned | Was the fourth major Python option; four-plus years dead. Nothing to evaluate |
+| `magql` (pallets-eco) | 1.1.1, Aug 2024 | Niche graphql-core wrapper, minimal adoption, SQLAlchemy-oriented; ~2 years quiet |
+| `graphql-server`, `aiohttp-graphql`, `flask-graphql` | Dormant | Serving shims for Graphene, inheriting its dormancy |
+| `graphql-core` used directly | Active — it underpins all three evaluated libraries | Viable "no framework" option, but Ariadne *is* graphql-core plus the executable-schema and ASGI conveniences we'd otherwise hand-write. Strictly less than the incumbent, so nothing new to learn from building it |
+| Node.js stacks (Apollo Server, GraphQL Yoga, Pothos) | Very active — the most mature GraphQL ecosystem | Architecturally disqualified: requires either duplicating Mongo query logic in a second language or having Node call the Python services over HTTP. Both break the prototype's invariants (one service layer, one Mongo access point, Pydantic as single schema source) and remove the GraphQL layer from the in-process parity harness |
+| Auto-GraphQL gateways (Hasura, WunderGraph, Grafbase) | Active products | Generate GraphQL directly over the database — query logic would live outside `bank_ods.services.*` (explicitly forbidden), losing the shared pagination/error/date semantics. Mostly Postgres-first; Mongo via connectors of varying maturity |
+
+Related datapoint: **MongoDB launched and then retired its own native Atlas GraphQL API** (deprecated 2023, end-of-life March 2025), directing customers to third-party solutions. The vendor exiting the auto-generated-GraphQL-over-Mongo category supports the choice this prototype makes: own the GraphQL layer inside your own service tier.
+
 ## What was built to validate it
 
 | Artifact | Purpose |
@@ -148,6 +163,34 @@ Raw counts understate the difference: Ariadne's 144-line generator is never touc
 - Graphene is the better technical fit of the two alternatives (full `Literal` support, parity-level performance) but **its stack has not been updated in a long time** — core ~19 months, Pydantic bridge ~2.5 years — and it still loses the registry-driven invariant while adding hand-rolled serving code. Dormant dependencies are the wrong foundation for a new transport layer.
 
 Both twins (`ports 8002/8003`) and their 24-test harness are kept in-tree as evidence; each can be deleted without touching anything else.
+
+---
+
+## Fairness notes and open questions for the application team
+
+Points that cut against the recommendation, or that could change it — stated here so they are addressed head-on rather than omitted:
+
+1. **Community momentum favors Strawberry.** This review uses maintenance cadence to disqualify Graphene; the same lens applied to Ariadne shows a stable, active 1.0 library — but one maintained primarily by a single company (Mirumee) with a smaller contributor base than Strawberry, which has the largest community and release velocity of the three. If the deciding question is "which library is most certain to be healthy in five years," Strawberry has the strongest claim. The counterweights: Ariadne's surface area in this codebase is tiny (236 lines, mostly our own generator), graphql-core does the heavy lifting in all cases, and a future migration would be cheap — the parity harness built for this evaluation *is* the migration safety net.
+2. **What is the team's actual roadmap?** If the request for Strawberry is really driven by unstated plans — **mutations with validated input types**, **subscriptions** (e.g., pushing settlement-status changes), or **Apollo Federation** into an enterprise gateway — the calculus changes: Strawberry has first-class support for all three; Ariadne supports them less ergonomically; Graphene effectively not at all. Today's read-only ODS constraint makes these moot, but the team should be asked directly before this review is treated as final.
+3. **Pydantic-version coupling.** Strawberry's experimental integration and graphene-pydantic both reach into Pydantic v2 internals. When Pydantic 3 arrives, the experimental namespace carries no stability promise and the dormant bridge will almost certainly break. Ariadne's only Pydantic coupling is our own 144-line generator, which we control and can fix in an afternoon. This asymmetry strengthens the recommendation.
+4. **Not-found error shape should be a decision, not an accident.** Ariadne's current `null` + non-null-violation entry in `errors` is a leak of the service error envelope, not a designed contract; both twins return a clean `null`. Whichever library stays, the team should pick the canonical behavior and pin it with a test — clients may already depend on the current shape.
+
+---
+
+## Design gap addressed: query protection
+
+The evaluation surfaced a gap that belongs to the *design*, not to any library: none of the layers limited query cost, and introspection was unconditionally open — while the K8s deployment targets 40–50K requests/day from real clients. This has now been **engineered into the Ariadne layer** (`graphql/protection.py`), proving no product swap is needed to close it:
+
+| Protection | Mechanism | Default |
+|---|---|---|
+| Query depth limit | graphql-core `ValidationRule` — rejects at validation, before any resolver or MongoDB call; follows fragments | `GRAPHQL_MAX_DEPTH=10` |
+| Root-field / alias cap | Same mechanism; blocks alias amplification (`{ a1: get_settlement_fails(...) ... a200: ... }` = 200 Mongo queries from one request) — the realistic attack vector for this flat schema | `GRAPHQL_MAX_ROOT_FIELDS=10` |
+| Introspection kill-switch | graphql-core's built-in `NoSchemaIntrospectionCustomRule` | `GRAPHQL_INTROSPECTION=true` (set `false` in production) |
+| Schema-drift guard | `tests/test_protection.py::test_schema_matches_snapshot` — generated SDL must match the checked-in `tests/schema.snapshot.graphql`, so any contract change appears as a reviewable diff in the PR that caused it | always on |
+
+Covered by 9 tests in `tests/test_protection.py` (validation-rule units, live alias-amplification rejection through the app, introspection default). Verified manually that `GRAPHQL_INTROSPECTION=false` blocks `__schema` while normal queries pass.
+
+Deliberately out of scope for the prototype, but required before production exposure: rate limiting at the ingress/gateway, per-field cost analysis (depth × breadth weighting) if the schema ever gains nested relations, persisted-query allow-lists for known clients, and disabling GraphiQL/playground UIs in production. Note for fairness: Strawberry ships `QueryDepthLimiter`/`MaxTokensLimiter` extensions out of the box — the one place its batteries-included approach genuinely leads; the equivalent here cost ~90 lines against graphql-core, and identical rules would drop into the other twins unchanged since all three execute through graphql-core validation.
 
 ## Reproducing the evaluation
 
