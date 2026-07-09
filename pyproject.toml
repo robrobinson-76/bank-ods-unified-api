@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "ariadne>=0.23",
     "httpx>=0.27",
+    "strawberry-graphql[fastapi]>=0.320.4",
 ]
 
 [project.optional-dependencies]

@@ -75,7 +75,8 @@ pytest tests/ -v
 # 5. Start the transports
 python -m bank_ods.mcp                          # MCP (stdio)
 uvicorn bank_ods.rest:app --port 8000           # REST
-uvicorn bank_ods.graphql:app --port 8001        # GraphQL
+uvicorn bank_ods.graphql:app --port 8001        # GraphQL (Ariadne)
+uvicorn bank_ods.graphql_strawberry:app --port 8002  # GraphQL (Strawberry evaluation twin)
 ```
 
 Copy `.env.example` to `.env` before running.
@@ -91,7 +92,8 @@ src/bank_ods/
 ├── services/        15 async functions — all MongoDB access lives here
 ├── mcp/             @mcp.tool() wrappers → services (fastmcp)
 ├── rest/            FastAPI routers → services
-└── graphql/         Ariadne resolvers → services; SDL generated from models
+├── graphql/         Ariadne resolvers → services; SDL generated from models
+└── graphql_strawberry/  Strawberry evaluation twin — same contract, port 8002
 ```
 
 ---
@@ -163,6 +165,8 @@ query {
 
 Endpoint: `POST http://localhost:8001/graphql`. SDL is generated at startup from the Pydantic models.
 
+**Side-by-side Strawberry evaluation:** an alternative implementation of the same GraphQL contract using Strawberry's experimental Pydantic integration lives in `bank_ods/graphql_strawberry` and serves `POST http://localhost:8002/graphql/` (GraphiQL included). The two schemas are introspection-identical and answer the same queries — compare them live, or read the findings in [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md). `tests/test_strawberry_parity.py` enforces service == REST == Ariadne == Strawberry.
+
 ---
 
 ## How Data-Driven Schema Works
@@ -226,8 +230,9 @@ pytest tests/ -v
 | `test_rest.py` | REST status codes and response shapes |
 | `test_graphql.py` | GraphQL query structure |
 | `test_parity.py` | Cross-layer equivalence — REST == GraphQL == service |
+| `test_strawberry_parity.py` | Strawberry twin — 4-way parity, schema introspection match, behavioral diffs |
 
-49 tests. The parity tests are the primary contract: if all three transports return the same result, the pattern is working.
+61 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
 
 ---
 
@@ -238,6 +243,7 @@ pytest tests/ -v
 | MCP | fastmcp |
 | REST | FastAPI + uvicorn |
 | GraphQL | Ariadne |
+| GraphQL (evaluation twin) | Strawberry |
 | MongoDB driver | motor (async) |
 | Models | Pydantic v2 |
 | Python | ≥ 3.11 |
@@ -251,6 +257,7 @@ pytest tests/ -v
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture, domain model, service API, design decisions |
 | [docs/AGENTS.md](docs/AGENTS.md) | MCP tool reference, query patterns, pagination, best practices |
+| [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md) | Strawberry vs Ariadne evaluation — findings, benchmarks, recommendation |
 
 ---
 

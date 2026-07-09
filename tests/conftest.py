@@ -11,6 +11,7 @@ from bank_ods.db.client import get_db
 from bank_ods.db.indexes import ensure_indexes
 from bank_ods.rest.app import app as rest_app
 from bank_ods.graphql.app import app as graphql_app
+from bank_ods.graphql_strawberry.app import app as strawberry_app
 
 
 @pytest.fixture(scope="session")
@@ -64,6 +65,15 @@ async def rest_client():
 async def gql_client():
     async with AsyncClient(
         transport=ASGITransport(app=graphql_app), base_url="http://test"
+    ) as client:
+        yield client
+
+
+@pytest_asyncio.fixture(scope="session")
+async def sb_client():
+    """Client for the side-by-side Strawberry GraphQL app (same contract as gql_client)."""
+    async with AsyncClient(
+        transport=ASGITransport(app=strawberry_app), base_url="http://test"
     ) as client:
         yield client
 

@@ -46,5 +46,24 @@ services:
       mongodb:
         condition: service_healthy
 
+  # Side-by-side Strawberry evaluation twin of the Ariadne graphql service.
+  # Same contract, same queries — see docs/REVIEW-strawberry-graphql.md.
+  graphql-strawberry:
+    build:
+      context: .
+      dockerfile: Dockerfile.graphql
+    container_name: bank-ods-graphql-strawberry
+    command: ["uvicorn", "bank_ods.graphql_strawberry:app", "--host", "0.0.0.0", "--port", "8002"]
+    ports:
+      - "8002:8002"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DB: bank_ods
+      LOG_LEVEL: INFO
+      DEBUG: "false"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
 volumes:
   mongo_data:

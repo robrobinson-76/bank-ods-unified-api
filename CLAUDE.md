@@ -19,6 +19,7 @@ This is a self-contained local development prototype. It is **not** a production
 | [docs/PLAN.md](docs/PLAN.md) | Original phased implementation plan — **reference only, do not modify** |
 | [docs/PLAN-multilayer.md](docs/PLAN-multilayer.md) | Unified MCP/REST/GraphQL plan — **reference only, do not modify** |
 | [docs/PLAN-k8s-scalability.md](docs/PLAN-k8s-scalability.md) | K8s scalability implementation plan — **reference only, do not modify** |
+| [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md) | Strawberry vs Ariadne evaluation; the Strawberry twin in `bank_ods/graphql_strawberry` (port 8002) is its living evidence |
 
 Read `ARCHITECTURE.md` for codebase orientation. Read `AGENTS.md` before writing queries or extending the MCP tool surface.
 
@@ -46,8 +47,11 @@ python -m bank_ods.mcp
 # REST API
 uvicorn bank_ods.rest:app --port 8000
 
-# GraphQL API
+# GraphQL API (Ariadne — the current solution)
 uvicorn bank_ods.graphql:app --port 8001
+
+# GraphQL API (Strawberry — side-by-side evaluation twin, same contract)
+uvicorn bank_ods.graphql_strawberry:app --port 8002
 ```
 
 Environment: copy `.env.example` to `.env`. See `ARCHITECTURE.md` → Environment Variables.

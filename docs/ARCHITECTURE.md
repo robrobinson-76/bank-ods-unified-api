@@ -504,6 +504,10 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - `DateTime` custom scalar serializes datetime to ISO string
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
 
+#### Side-by-side Strawberry evaluation — `bank_ods.graphql_strawberry`
+
+A second implementation of the identical GraphQL contract, built with Strawberry's experimental Pydantic integration to evaluate a proposed library swap. Entry point: `uvicorn bank_ods.graphql_strawberry:app --port 8002`, endpoint `POST /graphql/` (GraphiQL included). The schemas are introspection-identical; `tests/test_strawberry_parity.py` enforces service == REST == Ariadne == Strawberry. Findings and recommendation: [REVIEW-strawberry-graphql.md](REVIEW-strawberry-graphql.md). This package is evaluation evidence, not part of the core pattern — it can be deleted without touching anything else.
+
 ---
 
 ## Index Strategy
