@@ -13,6 +13,8 @@ dependencies = [
     "ariadne>=0.23",
     "httpx>=0.27",
     "strawberry-graphql[fastapi]>=0.320.4",
+    "graphene>=3.4.3",
+    "graphene-pydantic>=0.6.1",
 ]
 
 [project.optional-dependencies]

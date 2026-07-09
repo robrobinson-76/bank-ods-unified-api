@@ -65,5 +65,23 @@ services:
       mongodb:
         condition: service_healthy
 
+  # Side-by-side Graphene evaluation twin — same contract, port 8003.
+  graphql-graphene:
+    build:
+      context: .
+      dockerfile: Dockerfile.graphql
+    container_name: bank-ods-graphql-graphene
+    command: ["uvicorn", "bank_ods.graphql_graphene:app", "--host", "0.0.0.0", "--port", "8003"]
+    ports:
+      - "8003:8003"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017
+      MONGODB_DB: bank_ods
+      LOG_LEVEL: INFO
+      DEBUG: "false"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
 volumes:
   mongo_data:

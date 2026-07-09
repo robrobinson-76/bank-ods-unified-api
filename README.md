@@ -77,6 +77,7 @@ python -m bank_ods.mcp                          # MCP (stdio)
 uvicorn bank_ods.rest:app --port 8000           # REST
 uvicorn bank_ods.graphql:app --port 8001        # GraphQL (Ariadne)
 uvicorn bank_ods.graphql_strawberry:app --port 8002  # GraphQL (Strawberry evaluation twin)
+uvicorn bank_ods.graphql_graphene:app --port 8003    # GraphQL (Graphene evaluation twin)
 ```
 
 Copy `.env.example` to `.env` before running.
@@ -93,7 +94,8 @@ src/bank_ods/
 ├── mcp/             @mcp.tool() wrappers → services (fastmcp)
 ├── rest/            FastAPI routers → services
 ├── graphql/         Ariadne resolvers → services; SDL generated from models
-└── graphql_strawberry/  Strawberry evaluation twin — same contract, port 8002
+├── graphql_strawberry/  Strawberry evaluation twin — same contract, port 8002
+└── graphql_graphene/    Graphene evaluation twin — same contract, port 8003
 ```
 
 ---
@@ -165,7 +167,7 @@ query {
 
 Endpoint: `POST http://localhost:8001/graphql`. SDL is generated at startup from the Pydantic models.
 
-**Side-by-side Strawberry evaluation:** an alternative implementation of the same GraphQL contract using Strawberry's experimental Pydantic integration lives in `bank_ods/graphql_strawberry` and serves `POST http://localhost:8002/graphql/` (GraphiQL included). The two schemas are introspection-identical and answer the same queries — compare them live, or read the findings in [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md). `tests/test_strawberry_parity.py` enforces service == REST == Ariadne == Strawberry.
+**Side-by-side library evaluation:** two alternative implementations of the same GraphQL contract exist for comparison — `bank_ods/graphql_strawberry` (Strawberry's experimental Pydantic integration, port 8002, GraphiQL included) and `bank_ods/graphql_graphene` (graphene + graphene-pydantic, port 8003). All three schemas are introspection-identical and answer the same queries — compare them live, or read the findings, benchmarks, and version-landscape facts in [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md). `tests/test_strawberry_parity.py` and `tests/test_graphene_parity.py` enforce parity against service, REST, and Ariadne.
 
 ---
 
@@ -231,8 +233,9 @@ pytest tests/ -v
 | `test_graphql.py` | GraphQL query structure |
 | `test_parity.py` | Cross-layer equivalence — REST == GraphQL == service |
 | `test_strawberry_parity.py` | Strawberry twin — 4-way parity, schema introspection match, behavioral diffs |
+| `test_graphene_parity.py` | Graphene twin — same harness against port-8003 implementation |
 
-61 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
+73 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
 
 ---
 
@@ -243,7 +246,7 @@ pytest tests/ -v
 | MCP | fastmcp |
 | REST | FastAPI + uvicorn |
 | GraphQL | Ariadne |
-| GraphQL (evaluation twin) | Strawberry |
+| GraphQL (evaluation twins) | Strawberry, Graphene + graphene-pydantic |
 | MongoDB driver | motor (async) |
 | Models | Pydantic v2 |
 | Python | ≥ 3.11 |
@@ -257,7 +260,7 @@ pytest tests/ -v
 |---|---|
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture, domain model, service API, design decisions |
 | [docs/AGENTS.md](docs/AGENTS.md) | MCP tool reference, query patterns, pagination, best practices |
-| [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md) | Strawberry vs Ariadne evaluation — findings, benchmarks, recommendation |
+| [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md) | GraphQL library evaluation (Ariadne vs Strawberry vs Graphene) — findings, benchmarks, recommendation |
 
 ---
 

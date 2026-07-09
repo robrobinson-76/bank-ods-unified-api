@@ -504,9 +504,9 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - `DateTime` custom scalar serializes datetime to ISO string
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
 
-#### Side-by-side Strawberry evaluation — `bank_ods.graphql_strawberry`
+#### Side-by-side library evaluation twins — `bank_ods.graphql_strawberry`, `bank_ods.graphql_graphene`
 
-A second implementation of the identical GraphQL contract, built with Strawberry's experimental Pydantic integration to evaluate a proposed library swap. Entry point: `uvicorn bank_ods.graphql_strawberry:app --port 8002`, endpoint `POST /graphql/` (GraphiQL included). The schemas are introspection-identical; `tests/test_strawberry_parity.py` enforces service == REST == Ariadne == Strawberry. Findings and recommendation: [REVIEW-strawberry-graphql.md](REVIEW-strawberry-graphql.md). This package is evaluation evidence, not part of the core pattern — it can be deleted without touching anything else.
+Two additional implementations of the identical GraphQL contract, built to evaluate proposed library swaps: Strawberry's experimental Pydantic integration (`uvicorn bank_ods.graphql_strawberry:app --port 8002`, GraphiQL included) and graphene + graphene-pydantic (`uvicorn bank_ods.graphql_graphene:app --port 8003`, no GraphiQL — graphene ships no ASGI integration). All three schemas are introspection-identical; `tests/test_strawberry_parity.py` and `tests/test_graphene_parity.py` enforce parity against service, REST, and Ariadne. Findings, benchmarks, and the version-landscape facts (graphene core last released 2024-12; graphene-pydantic 2024-02): [REVIEW-strawberry-graphql.md](REVIEW-strawberry-graphql.md). These packages are evaluation evidence, not part of the core pattern — each can be deleted without touching anything else.
 
 ---
 
