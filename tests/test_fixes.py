@@ -11,11 +11,10 @@ import bank_ods.services.securities as svc_securities
 import bank_ods.services.settlements as svc_settlements
 import bank_ods.services.transactions as svc_transactions
 
-pytestmark = pytest.mark.asyncio
-
 
 # ── Date-window regressions (bugs found in the architecture review) ──────────
 
+@pytest.mark.asyncio
 async def test_settlements_match_whole_day(db):
     """Settlements are stamped intraday (16:00 EOD); querying by calendar date
     must return them. Regression: exact-midnight equality returned 0 forever."""
@@ -27,6 +26,7 @@ async def test_settlements_match_whole_day(db):
     assert any(d["settlementId"] == s["settlementId"] for d in result["data"])
 
 
+@pytest.mark.asyncio
 async def test_transactions_range_includes_end_date(db):
     """from_date == to_date == a real trade day must return that day's trades.
     Regression: $lte midnight excluded all same-day (intraday-stamped) trades."""
@@ -38,6 +38,7 @@ async def test_transactions_range_includes_end_date(db):
     assert any(d["transactionId"] == t["transactionId"] for d in result["data"])
 
 
+@pytest.mark.asyncio
 async def test_invalid_date_envelope_and_rest_400(rest_client, first_account):
     """Bad date input returns the INVALID_DATE envelope (never raises) and
     maps to HTTP 400 at the REST boundary — not a 500."""
@@ -52,6 +53,7 @@ async def test_invalid_date_envelope_and_rest_400(rest_client, first_account):
 
 # ── Securities surface (previously had no query surface at all) ──────────────
 
+@pytest.mark.asyncio
 async def test_securities_parity_all_layers(rest_client, gql_client, sb_client, gr_client):
     service = await svc_securities.list_securities(asset_class="GOVT_BOND", limit=5)
     assert service["count"] > 0
@@ -70,6 +72,7 @@ async def test_securities_parity_all_layers(rest_client, gql_client, sb_client, 
     assert svc_ids == [d["securityId"] for d in ariadne["data"]]
 
 
+@pytest.mark.asyncio
 async def test_get_security_not_found_rest_404(rest_client):
     resp = await rest_client.get("/securities/SEC-DOES-NOT-EXIST")
     assert resp.status_code == 404
@@ -77,6 +80,7 @@ async def test_get_security_not_found_rest_404(rest_client):
 
 # ── Decimal + timestamp serialization contract ────────────────────────────────
 
+@pytest.mark.asyncio
 async def test_decimal_serialized_as_exact_string(rest_client):
     """Monetary values are Decimal128 in Mongo and exact strings on the wire."""
     r = (await rest_client.get("/securities", params={"asset_class": "GOVT_BOND", "limit": 1})).json()
@@ -86,6 +90,7 @@ async def test_decimal_serialized_as_exact_string(rest_client):
     Decimal(coupon)  # parses exactly
 
 
+@pytest.mark.asyncio
 async def test_timestamps_carry_utc_offset(rest_client, first_account):
     r = (await rest_client.get(f"/accounts/{first_account['accountId']}")).json()
     assert r["openDate"].endswith("+00:00")
@@ -94,8 +99,25 @@ async def test_timestamps_carry_utc_offset(rest_client, first_account):
 
 # ── Readiness probes ──────────────────────────────────────────────────────────
 
+@pytest.mark.asyncio
 async def test_ready_endpoints(rest_client, gql_client, sb_client, gr_client):
     for client in (rest_client, gql_client, sb_client, gr_client):
         resp = await client.get("/ready")
         assert resp.status_code == 200
         assert resp.json() == {"status": "ready"}
+
+
+# ── Motor client is cached per event loop ─────────────────────────────────────
+
+def test_client_survives_multiple_event_loops():
+    """One process can run several event loops (scripts, notebooks, tools).
+    Regression: a single process-global Motor client was bound to the first
+    loop forever, so every later loop failed with 'Event loop is closed'."""
+    import asyncio
+    import bank_ods.services.accounts as svc_accounts
+
+    r1 = asyncio.run(svc_accounts.list_accounts(limit=1))
+    r2 = asyncio.run(svc_accounts.list_accounts(limit=1))
+    assert "error" not in r1
+    assert "error" not in r2
+    assert r1["count"] == r2["count"]
