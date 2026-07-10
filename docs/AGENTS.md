@@ -290,13 +290,33 @@ IDs are opaque strings from seed data. Do not construct or guess them. Always di
 
 Seed data patterns: `ACC-XXXX`, `TXN-XXXXXXXX`, `SEC-XXXX`, `SET-XXXXXXXX`
 
+### Reference-Data Identifier Formats
+
+| Identifier | Standard | Format | Where it lives |
+|---|---|---|---|
+| ISIN | ISO 6166 | 12 chars (2-letter country + 9 alnum + check digit) | `security.isin` — issue level |
+| SEDOL | LSEG | 7 chars (6 alnum, no vowels + weighted mod-10 check digit) | `security.listings[].sedol` — one per market of listing and traded currency |
+| FIGI | OpenFIGI | 12 chars, `BBG` prefix | `security.figi` — share-class level (1:1 with ISIN) |
+| MIC | ISO 10383 | 4 alnum (e.g. `XNYS`, `XTSE`; segment `XNGS` under operating `XNAS`) | `security.listings[].micCode` / `operatingMic` |
+| LEI | ISO 17442 | 20 chars (18 alnum + 2 check digits) | `account.client.lei` — standard client linkage key |
+| Country | ISO 3166-1 alpha-2 | 2 letters (`CA`, `US`, `GB`) | `client.countryOfDomicile`, `listings[].countryOfListing`, `taxResidencies` |
+| Settlement location | BIC of the market CSD | e.g. `DTCYUS33` (DTC), `CDSLCATT` (CDS), `CRSTGB22` (CREST) | `security.listings[].settlementLocation` |
+
+To resolve an instrument the way SEDOL-keyed upstream systems do, use `get_security_by_sedol(sedol=...)` — any listing's SEDOL (primary or secondary) returns the same parent security.
+
 ### Status Values
 
 | Domain | Valid Values |
 |---|---|
 | Account | ACTIVE, SUSPENDED, CLOSED |
+| Security | ACTIVE, MATURED, DELISTED |
+| Listing | ACTIVE, SUSPENDED, DELISTED |
 | Transaction | PENDING, MATCHED, SETTLED, FAILED, CANCELLED |
 | Settlement | PENDING, INSTRUCTED, MATCHED, SETTLED, FAILED, CANCELLED, RECYCLED |
+| Client classification | RETAIL, PROFESSIONAL, ELIGIBLE_COUNTERPARTY |
+| Client kycStatus | APPROVED, PENDING_REVIEW, EXPIRED |
+| Client riskRating | LOW, MEDIUM, HIGH |
+| Client legalEntityType | CORPORATION, PARTNERSHIP, FUND, TRUST, GOVERNMENT, INDIVIDUAL |
 
 ### Transaction Types
 
@@ -361,6 +381,23 @@ An empty list result is not an error: `{"count": 0, "data": []}` means no record
 2. get_settlement_fails(from_date, to_date, account_id=target)       → scoped
 ```
 
+### Resolve a mainframe SEDOL to a security
+
+```
+1. get_security_by_sedol(sedol="B1WXR90")
+   → parent security with all listings; find the matching listing for
+     settlement location / traded currency
+```
+
+### Client-scoped account discovery
+
+```
+1. list_accounts(lei="549300...")          → all accounts of a legal entity
+2. list_accounts(domicile="CA")            → accounts of Canadian-domiciled clients
+   → client-master details (domicile, tax residencies, KYC) are embedded
+     in every returned account under "client" — no second call needed
+```
+
 ---
 
 ## Pagination
@@ -394,7 +431,7 @@ get_transactions(account_id, from_date, to_date, limit=50, skip=50)
 
 - **No mutations.** Read-only ODS view — no create, update, or delete tools.
 - **No cross-account aggregation.** No "all accounts" summary; iterate `list_accounts` if needed.
-- **No free-text security search.** `list_securities` filters by asset class/ticker/status only.
+- **No free-text security search.** `list_securities` filters by asset class/ticker/status/SEDOL (exact match) only; exact-identifier resolution is available via `get_security_by_sedol`.
 - **No real-time prices.** All prices are EOD snapshots from seed data.
 - **No authentication.** Connects to a local MongoDB instance with no credentials.
 
