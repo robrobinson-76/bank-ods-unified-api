@@ -2,11 +2,10 @@ import logging
 
 import pymongo.errors
 from bank_ods.db.client import get_collection
-from bank_ods.services._common import clamp_skip, date_window, day_range, serialize_doc
+from bank_ods.services._common import date_window, day_range, serialize_doc
+from bank_ods.services.pagination import DEFAULT_LIMIT, InvalidCursorError, paginate
 
 logger = logging.getLogger("bank_ods.services")
-
-_PAGE_SIZE = 200
 
 
 async def get_settlement(settlement_id: str) -> dict:
@@ -39,11 +38,13 @@ async def get_settlements(
     account_id: str,
     settlement_date: str,
     status: str | None = None,
-    skip: int = 0,
+    limit: int = DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> dict:
     """Query settlements for an account on a settlement date (whole calendar day, YYYY-MM-DD).
 
-    count is the TOTAL number of matching documents; data is the requested page.
+    data is one page; while page_info.has_more, pass page_info.next_cursor
+    back as cursor to fetch the next page.
     """
     try:
         col = get_collection("settlements")
@@ -53,10 +54,9 @@ async def get_settlements(
         }
         if status:
             query["status"] = status
-        total = await col.count_documents(query)
-        cursor = col.find(query, {"_id": 0}).skip(clamp_skip(skip)).limit(_PAGE_SIZE)
-        docs = await cursor.to_list(length=_PAGE_SIZE)
-        return {"count": total, "data": [serialize_doc(d) for d in docs]}
+        return await paginate(col, query, [("settlementId", 1)], limit, cursor)
+    except InvalidCursorError as e:
+        return {"error": str(e), "code": "INVALID_CURSOR"}
     except ValueError as e:
         return {"error": f"Invalid date: {e}", "code": "INVALID_DATE"}
     except pymongo.errors.PyMongoError:
@@ -68,11 +68,13 @@ async def get_settlement_fails(
     from_date: str,
     to_date: str,
     account_id: str | None = None,
-    skip: int = 0,
+    limit: int = DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> dict:
     """Find all FAILED settlements within an inclusive date window, optionally by account.
 
-    count is the TOTAL number of matching documents; data is the requested page.
+    data is one page; while page_info.has_more, pass page_info.next_cursor
+    back as cursor to fetch the next page.
     """
     try:
         col = get_collection("settlements")
@@ -82,15 +84,9 @@ async def get_settlement_fails(
         }
         if account_id:
             query["accountId"] = account_id
-        total = await col.count_documents(query)
-        cursor = (
-            col.find(query, {"_id": 0})
-            .sort("settlementDate", -1)
-            .skip(clamp_skip(skip))
-            .limit(_PAGE_SIZE)
-        )
-        docs = await cursor.to_list(length=_PAGE_SIZE)
-        return {"count": total, "data": [serialize_doc(d) for d in docs]}
+        return await paginate(col, query, [("settlementDate", -1)], limit, cursor)
+    except InvalidCursorError as e:
+        return {"error": str(e), "code": "INVALID_CURSOR"}
     except ValueError as e:
         return {"error": f"Invalid date: {e}", "code": "INVALID_DATE"}
     except pymongo.errors.PyMongoError:

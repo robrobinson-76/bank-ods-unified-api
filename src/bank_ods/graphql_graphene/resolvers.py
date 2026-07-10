@@ -32,7 +32,7 @@ from bank_ods.graphql_graphene.types import (
     PositionType, PositionList,
     SettlementType, SettlementList,
     CashBalanceType, CashBalanceList,
-    ProjectedBalance,
+    PageInfo, ProjectedBalance,
 )
 
 
@@ -45,7 +45,11 @@ def _item(result: dict, model_cls):
 def _entity_list(result: dict, model_cls, list_cls):
     if "error" in result:
         raise RuntimeError(result["error"])
-    return list_cls(count=result["count"], data=[model_cls.model_validate(d) for d in result["data"]])
+    pi = result["page_info"]
+    return list_cls(
+        data=[model_cls.model_validate(d) for d in result["data"]],
+        pageInfo=PageInfo(hasMore=pi["has_more"], nextCursor=pi["next_cursor"]),
+    )
 
 
 class Query(graphene.ObjectType):
@@ -57,14 +61,14 @@ class Query(graphene.ObjectType):
         AccountList, required=True,
         clientId=graphene.String(), status=graphene.String(),
         lei=graphene.String(), domicile=graphene.String(),
-        limit=graphene.Int(), skip=graphene.Int(),
+        limit=graphene.Int(), cursor=graphene.String(),
     )
 
     async def resolve_get_account(self, _info, accountId):
         return _item(await svc_accounts.get_account(accountId), AccountModel)
 
-    async def resolve_list_accounts(self, _info, clientId=None, status=None, lei=None, domicile=None, limit=20, skip=0):
-        return _entity_list(await svc_accounts.list_accounts(clientId, status, lei, domicile, limit, skip),
+    async def resolve_list_accounts(self, _info, clientId=None, status=None, lei=None, domicile=None, limit=50, cursor=None):
+        return _entity_list(await svc_accounts.list_accounts(clientId, status, lei, domicile, limit, cursor),
                             AccountModel, AccountList)
 
     # ── Securities ────────────────────────────────────────────────────────
@@ -75,7 +79,7 @@ class Query(graphene.ObjectType):
         SecurityList, required=True,
         assetClass=graphene.String(), ticker=graphene.String(), status=graphene.String(),
         sedol=graphene.String(),
-        limit=graphene.Int(), skip=graphene.Int(),
+        limit=graphene.Int(), cursor=graphene.String(),
     )
 
     async def resolve_get_security(self, _info, securityId):
@@ -84,8 +88,8 @@ class Query(graphene.ObjectType):
     async def resolve_get_security_by_sedol(self, _info, sedol):
         return _item(await svc_securities.get_security_by_sedol(sedol), SecurityModel)
 
-    async def resolve_list_securities(self, _info, assetClass=None, ticker=None, status=None, sedol=None, limit=50, skip=0):
-        result = await svc_securities.list_securities(assetClass, ticker, status, sedol, limit, skip)
+    async def resolve_list_securities(self, _info, assetClass=None, ticker=None, status=None, sedol=None, limit=50, cursor=None):
+        result = await svc_securities.list_securities(assetClass, ticker, status, sedol, limit, cursor)
         return _entity_list(result, SecurityModel, SecurityList)
 
     # ── Transactions ──────────────────────────────────────────────────────
@@ -96,7 +100,7 @@ class Query(graphene.ObjectType):
         accountId=graphene.String(required=True),
         fromDate=graphene.String(required=True), toDate=graphene.String(required=True),
         status=graphene.String(), transactionType=graphene.String(),
-        limit=graphene.Int(), skip=graphene.Int(),
+        limit=graphene.Int(), cursor=graphene.String(),
     )
     get_transaction_summary = graphene.Field(
         TransactionSummaryList, required=True,
@@ -108,8 +112,8 @@ class Query(graphene.ObjectType):
         return _item(await svc_transactions.get_transaction(transactionId), TransactionModel)
 
     async def resolve_get_transactions(self, _info, accountId, fromDate, toDate,
-                                       status=None, transactionType=None, limit=50, skip=0):
-        result = await svc_transactions.get_transactions(accountId, fromDate, toDate, status, transactionType, limit, skip)
+                                       status=None, transactionType=None, limit=50, cursor=None):
+        result = await svc_transactions.get_transactions(accountId, fromDate, toDate, status, transactionType, limit, cursor)
         return _entity_list(result, TransactionModel, TransactionList)
 
     async def resolve_get_transaction_summary(self, _info, accountId, fromDate, toDate):
@@ -117,7 +121,6 @@ class Query(graphene.ObjectType):
         if "error" in result:
             raise RuntimeError(result["error"])
         return TransactionSummaryList(
-            count=result["count"],
             data=[TransactionSummaryItem(**item) for item in result["data"]],
         )
 
@@ -131,24 +134,24 @@ class Query(graphene.ObjectType):
     get_positions = graphene.Field(
         PositionList, required=True,
         accountId=graphene.String(required=True), asOfDate=graphene.String(required=True),
-        skip=graphene.Int(),
+        limit=graphene.Int(), cursor=graphene.String(),
     )
     get_position_history = graphene.Field(
         PositionList, required=True,
         accountId=graphene.String(required=True), securityId=graphene.String(required=True),
         fromDate=graphene.String(required=True), toDate=graphene.String(required=True),
-        skip=graphene.Int(),
+        limit=graphene.Int(), cursor=graphene.String(),
     )
 
     async def resolve_get_position(self, _info, accountId, securityId, asOfDate):
         return _item(await svc_positions.get_position(accountId, securityId, asOfDate), PositionModel)
 
-    async def resolve_get_positions(self, _info, accountId, asOfDate, skip=0):
-        return _entity_list(await svc_positions.get_positions(accountId, asOfDate, skip),
+    async def resolve_get_positions(self, _info, accountId, asOfDate, limit=50, cursor=None):
+        return _entity_list(await svc_positions.get_positions(accountId, asOfDate, limit, cursor),
                             PositionModel, PositionList)
 
-    async def resolve_get_position_history(self, _info, accountId, securityId, fromDate, toDate, skip=0):
-        result = await svc_positions.get_position_history(accountId, securityId, fromDate, toDate, skip)
+    async def resolve_get_position_history(self, _info, accountId, securityId, fromDate, toDate, limit=50, cursor=None):
+        result = await svc_positions.get_position_history(accountId, securityId, fromDate, toDate, limit, cursor)
         return _entity_list(result, PositionModel, PositionList)
 
     # ── Settlements ───────────────────────────────────────────────────────
@@ -158,12 +161,12 @@ class Query(graphene.ObjectType):
     get_settlements = graphene.Field(
         SettlementList, required=True,
         accountId=graphene.String(required=True), settlementDate=graphene.String(required=True),
-        status=graphene.String(), skip=graphene.Int(),
+        status=graphene.String(), limit=graphene.Int(), cursor=graphene.String(),
     )
     get_settlement_fails = graphene.Field(
         SettlementList, required=True,
         fromDate=graphene.String(required=True), toDate=graphene.String(required=True),
-        accountId=graphene.String(), skip=graphene.Int(),
+        accountId=graphene.String(), limit=graphene.Int(), cursor=graphene.String(),
     )
 
     async def resolve_get_settlement(self, _info, settlementId):
@@ -172,12 +175,12 @@ class Query(graphene.ObjectType):
     async def resolve_get_settlement_status(self, _info, transactionId):
         return _item(await svc_settlements.get_settlement_status(transactionId), SettlementModel)
 
-    async def resolve_get_settlements(self, _info, accountId, settlementDate, status=None, skip=0):
-        result = await svc_settlements.get_settlements(accountId, settlementDate, status, skip)
+    async def resolve_get_settlements(self, _info, accountId, settlementDate, status=None, limit=50, cursor=None):
+        result = await svc_settlements.get_settlements(accountId, settlementDate, status, limit, cursor)
         return _entity_list(result, SettlementModel, SettlementList)
 
-    async def resolve_get_settlement_fails(self, _info, fromDate, toDate, accountId=None, skip=0):
-        result = await svc_settlements.get_settlement_fails(fromDate, toDate, accountId, skip)
+    async def resolve_get_settlement_fails(self, _info, fromDate, toDate, accountId=None, limit=50, cursor=None):
+        result = await svc_settlements.get_settlement_fails(fromDate, toDate, accountId, limit, cursor)
         return _entity_list(result, SettlementModel, SettlementList)
 
     # ── Balances ──────────────────────────────────────────────────────────
@@ -190,7 +193,7 @@ class Query(graphene.ObjectType):
     get_cash_balances = graphene.Field(
         CashBalanceList, required=True,
         accountId=graphene.String(required=True), asOfDate=graphene.String(required=True),
-        skip=graphene.Int(),
+        limit=graphene.Int(), cursor=graphene.String(),
     )
     get_projected_balance = graphene.Field(
         ProjectedBalance,
@@ -201,8 +204,8 @@ class Query(graphene.ObjectType):
     async def resolve_get_cash_balance(self, _info, accountId, currency, asOfDate):
         return _item(await svc_balances.get_cash_balance(accountId, currency, asOfDate), CashBalanceModel)
 
-    async def resolve_get_cash_balances(self, _info, accountId, asOfDate, skip=0):
-        return _entity_list(await svc_balances.get_cash_balances(accountId, asOfDate, skip),
+    async def resolve_get_cash_balances(self, _info, accountId, asOfDate, limit=50, cursor=None):
+        return _entity_list(await svc_balances.get_cash_balances(accountId, asOfDate, limit, cursor),
                             CashBalanceModel, CashBalanceList)
 
     async def resolve_get_projected_balance(self, _info, accountId, currency, asOfDate):

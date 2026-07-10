@@ -44,36 +44,52 @@ async def test_parity_get_account(rest_client, gql_client, first_account):
     assert service["status"] == rest["status"] == gql["status"]
 
 
-async def test_parity_list_accounts_count(rest_client, gql_client):
-    service = await svc_accounts.list_accounts(limit=10)
+async def test_parity_list_accounts_page(rest_client, gql_client):
+    """First page and its cursor are byte-identical across all three layers."""
+    service = await svc_accounts.list_accounts(limit=2)
 
-    rest_resp = await rest_client.get("/accounts", params={"limit": 10})
-    rest = rest_resp.json()
-
-    gql_resp = await gql_query(gql_client, "{ list_accounts(limit: 10) { count } }")
-    gql_count = gql_resp["data"]["list_accounts"]["count"]
-
-    assert service["count"] == rest["count"] == gql_count
-
-
-async def test_parity_skip_list_accounts(rest_client, gql_client):
-    """All three layers return the same records when skip=1 is applied."""
-    service = await svc_accounts.list_accounts(limit=20, skip=1)
-
-    rest_resp = await rest_client.get("/accounts", params={"limit": 20, "skip": 1})
+    rest_resp = await rest_client.get("/accounts", params={"limit": 2})
     rest = rest_resp.json()
 
     gql_resp = await gql_query(
         gql_client,
-        "{ list_accounts(limit: 20, skip: 1) { count data { accountId } } }",
+        "{ list_accounts(limit: 2) { data { accountId } pageInfo { hasMore nextCursor } } }",
     )
     gql = gql_resp["data"]["list_accounts"]
 
-    assert service["count"] == rest["count"] == gql["count"]
     svc_ids = [d["accountId"] for d in service["data"]]
-    rest_ids = [d["accountId"] for d in rest["data"]]
-    gql_ids = [d["accountId"] for d in gql["data"]]
-    assert svc_ids == rest_ids == gql_ids
+    assert svc_ids == [d["accountId"] for d in rest["data"]]
+    assert svc_ids == [d["accountId"] for d in gql["data"]]
+    assert (
+        service["page_info"]["has_more"]
+        == rest["page_info"]["has_more"]
+        == gql["pageInfo"]["hasMore"]
+    )
+    # The opaque cursor string itself must be identical — one shared implementation.
+    assert (
+        service["page_info"]["next_cursor"]
+        == rest["page_info"]["next_cursor"]
+        == gql["pageInfo"]["nextCursor"]
+    )
+
+
+async def test_parity_cursor_follow_list_accounts(rest_client, gql_client):
+    """Following the same cursor yields the same second page in all three layers."""
+    page1 = await svc_accounts.list_accounts(limit=1)
+    if not page1["page_info"]["has_more"]:
+        pytest.skip("Need more than 1 account")
+    cursor = page1["page_info"]["next_cursor"]
+
+    service = await svc_accounts.list_accounts(limit=1, cursor=cursor)
+    rest = (await rest_client.get("/accounts", params={"limit": 1, "cursor": cursor})).json()
+    gql = (await gql_query(
+        gql_client,
+        f'{{ list_accounts(limit: 1, cursor: "{cursor}") {{ data {{ accountId }} }} }}',
+    ))["data"]["list_accounts"]
+
+    svc_ids = [d["accountId"] for d in service["data"]]
+    assert svc_ids == [d["accountId"] for d in rest["data"]]
+    assert svc_ids == [d["accountId"] for d in gql["data"]]
 
 
 # ── Security parity ───────────────────────────────────────────────────────────
@@ -131,22 +147,23 @@ async def test_parity_list_securities_sedol_filter(rest_client, gql_client, dual
 
     gql_resp = await gql_query(
         gql_client,
-        f'{{ list_securities(sedol: "{sedol}") {{ count data {{ securityId }} }} }}',
+        f'{{ list_securities(sedol: "{sedol}") {{ data {{ securityId }} }} }}',
     )
     gql = gql_resp["data"]["list_securities"]
 
-    assert service["count"] == rest["count"] == gql["count"] == 1
+    assert len(service["data"]) == len(rest["data"]) == len(gql["data"]) == 1
     assert service["data"][0]["securityId"] == dual_listed_security["securityId"]
 
 
 # ── Transaction parity ────────────────────────────────────────────────────────
 
-async def test_parity_get_transactions_count(rest_client, gql_client, first_account):
+async def test_parity_get_transactions_page(rest_client, gql_client, first_account):
+    """First page and its cursor are byte-identical across all three layers."""
     account_id = first_account["accountId"]
-    params = dict(account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=20)
 
-    service = await svc_transactions.get_transactions(**params)
-
+    service = await svc_transactions.get_transactions(
+        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=20
+    )
     rest_resp = await rest_client.get("/transactions", params={
         "account_id": account_id, "from_date": "2020-01-01", "to_date": "2030-01-01", "limit": 20
     })
@@ -154,41 +171,52 @@ async def test_parity_get_transactions_count(rest_client, gql_client, first_acco
 
     gql_resp = await gql_query(
         gql_client,
-        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 20) {{ count }} }}',
-    )
-    gql_count = gql_resp["data"]["get_transactions"]["count"]
-
-    assert service["count"] == rest["count"] == gql_count
-
-
-async def test_parity_skip_transactions(rest_client, gql_client, first_account):
-    """skip=1 returns identical counts and first-item IDs across all three layers."""
-    account_id = first_account["accountId"]
-
-    service = await svc_transactions.get_transactions(
-        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=20, skip=1
-    )
-    rest_resp = await rest_client.get("/transactions", params={
-        "account_id": account_id, "from_date": "2020-01-01", "to_date": "2030-01-01",
-        "limit": 20, "skip": 1,
-    })
-    rest = rest_resp.json()
-
-    gql_resp = await gql_query(
-        gql_client,
-        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 20, skip: 1) {{ count data {{ transactionId }} }} }}',
+        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 20) {{ data {{ transactionId }} pageInfo {{ hasMore nextCursor }} }} }}',
     )
     gql = gql_resp["data"]["get_transactions"]
 
-    assert service["count"] == rest["count"] == gql["count"]
-    if service["count"] > 0:
-        assert service["data"][0]["transactionId"] == rest["data"][0]["transactionId"]
-        assert rest["data"][0]["transactionId"] == gql["data"][0]["transactionId"]
+    svc_ids = [d["transactionId"] for d in service["data"]]
+    assert svc_ids == [d["transactionId"] for d in rest["data"]]
+    assert svc_ids == [d["transactionId"] for d in gql["data"]]
+    assert (
+        service["page_info"]["next_cursor"]
+        == rest["page_info"]["next_cursor"]
+        == gql["pageInfo"]["nextCursor"]
+    )
+
+
+async def test_parity_cursor_follow_transactions(rest_client, gql_client, first_account):
+    """Following the same cursor yields the same second page in all three layers."""
+    account_id = first_account["accountId"]
+    page1 = await svc_transactions.get_transactions(
+        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=1
+    )
+    if not page1["page_info"]["has_more"]:
+        pytest.skip("Need more than 1 transaction")
+    cursor = page1["page_info"]["next_cursor"]
+
+    service = await svc_transactions.get_transactions(
+        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01",
+        limit=1, cursor=cursor,
+    )
+    rest = (await rest_client.get("/transactions", params={
+        "account_id": account_id, "from_date": "2020-01-01", "to_date": "2030-01-01",
+        "limit": 1, "cursor": cursor,
+    })).json()
+    gql = (await gql_query(
+        gql_client,
+        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 1, cursor: "{cursor}") {{ data {{ transactionId }} }} }}',
+    ))["data"]["get_transactions"]
+
+    svc_ids = [d["transactionId"] for d in service["data"]]
+    assert svc_ids == [d["transactionId"] for d in rest["data"]]
+    assert svc_ids == [d["transactionId"] for d in gql["data"]]
+    assert svc_ids != [d["transactionId"] for d in page1["data"]]
 
 
 # ── Settlement parity ─────────────────────────────────────────────────────────
 
-async def test_parity_settlement_fails_count(rest_client, gql_client):
+async def test_parity_settlement_fails_page(rest_client, gql_client):
     service = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01")
 
     rest_resp = await rest_client.get(
@@ -198,11 +226,18 @@ async def test_parity_settlement_fails_count(rest_client, gql_client):
 
     gql_resp = await gql_query(
         gql_client,
-        '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { count } }',
+        '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { data { settlementId } pageInfo { hasMore nextCursor } } }',
     )
-    gql_count = gql_resp["data"]["get_settlement_fails"]["count"]
+    gql = gql_resp["data"]["get_settlement_fails"]
 
-    assert service["count"] == rest["count"] == gql_count
+    svc_ids = [d["settlementId"] for d in service["data"]]
+    assert svc_ids == [d["settlementId"] for d in rest["data"]]
+    assert svc_ids == [d["settlementId"] for d in gql["data"]]
+    assert (
+        service["page_info"]["next_cursor"]
+        == rest["page_info"]["next_cursor"]
+        == gql["pageInfo"]["nextCursor"]
+    )
 
 
 # ── Balance parity ────────────────────────────────────────────────────────────

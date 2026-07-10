@@ -6,6 +6,7 @@ from fastapi import HTTPException
 _STATUS_BY_CODE = {
     "NOT_FOUND": 404,
     "INVALID_DATE": 400,
+    "INVALID_CURSOR": 400,
 }
 
 

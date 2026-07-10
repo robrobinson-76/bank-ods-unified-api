@@ -26,9 +26,9 @@ async def list_securities(
     status: Optional[str] = None,
     sedol: Optional[str] = None,
     limit: int = 50,
-    skip: int = 0,
+    cursor: Optional[str] = None,
 ):
     return check(await svc.list_securities(
         asset_class=asset_class, ticker=ticker, status=status, sedol=sedol,
-        limit=limit, skip=skip,
+        limit=limit, cursor=cursor,
     ))

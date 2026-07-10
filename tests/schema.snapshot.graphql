@@ -1,6 +1,11 @@
 scalar DateTime
 scalar Decimal
 
+type PageInfo {
+  hasMore: Boolean!
+  nextCursor: String
+}
+
 type ClientMaster {
   clientId: String!
   clientName: String!
@@ -48,8 +53,8 @@ type Account {
 }
 
 type AccountList {
-  count: Int!
   data: [Account!]!
+  pageInfo: PageInfo!
 }
 
 type Security {
@@ -74,8 +79,8 @@ type Security {
 }
 
 type SecurityList {
-  count: Int!
   data: [Security!]!
+  pageInfo: PageInfo!
 }
 
 type Transaction {
@@ -102,8 +107,8 @@ type Transaction {
 }
 
 type TransactionList {
-  count: Int!
   data: [Transaction!]!
+  pageInfo: PageInfo!
 }
 
 type Position {
@@ -124,8 +129,8 @@ type Position {
 }
 
 type PositionList {
-  count: Int!
   data: [Position!]!
+  pageInfo: PageInfo!
 }
 
 type Settlement {
@@ -151,8 +156,8 @@ type Settlement {
 }
 
 type SettlementList {
-  count: Int!
   data: [Settlement!]!
+  pageInfo: PageInfo!
 }
 
 type CashBalance {
@@ -173,8 +178,8 @@ type CashBalance {
 }
 
 type CashBalanceList {
-  count: Int!
   data: [CashBalance!]!
+  pageInfo: PageInfo!
 }
 
 
@@ -186,7 +191,6 @@ type TransactionSummaryItem {
 }
 
 type TransactionSummaryList {
-  count: Int!
   data: [TransactionSummaryItem!]!
 }
 
@@ -204,31 +208,31 @@ type ProjectedBalance {
 type Query {
   # Accounts
   get_account(accountId: String!): Account
-  list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, skip: Int): AccountList!
+  list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, cursor: String): AccountList!
 
   # Securities
   get_security(securityId: String!): Security
   get_security_by_sedol(sedol: String!): Security
-  list_securities(assetClass: String, ticker: String, status: String, sedol: String, limit: Int, skip: Int): SecurityList!
+  list_securities(assetClass: String, ticker: String, status: String, sedol: String, limit: Int, cursor: String): SecurityList!
 
   # Transactions
   get_transaction(transactionId: String!): Transaction
-  get_transactions(accountId: String!, fromDate: String!, toDate: String!, status: String, transactionType: String, limit: Int, skip: Int): TransactionList!
+  get_transactions(accountId: String!, fromDate: String!, toDate: String!, status: String, transactionType: String, limit: Int, cursor: String): TransactionList!
   get_transaction_summary(accountId: String!, fromDate: String!, toDate: String!): TransactionSummaryList!
 
   # Positions
   get_position(accountId: String!, securityId: String!, asOfDate: String!): Position
-  get_positions(accountId: String!, asOfDate: String!, skip: Int): PositionList!
-  get_position_history(accountId: String!, securityId: String!, fromDate: String!, toDate: String!, skip: Int): PositionList!
+  get_positions(accountId: String!, asOfDate: String!, limit: Int, cursor: String): PositionList!
+  get_position_history(accountId: String!, securityId: String!, fromDate: String!, toDate: String!, limit: Int, cursor: String): PositionList!
 
   # Settlements
   get_settlement(settlementId: String!): Settlement
   get_settlement_status(transactionId: String!): Settlement
-  get_settlements(accountId: String!, settlementDate: String!, status: String, skip: Int): SettlementList!
-  get_settlement_fails(fromDate: String!, toDate: String!, accountId: String, skip: Int): SettlementList!
+  get_settlements(accountId: String!, settlementDate: String!, status: String, limit: Int, cursor: String): SettlementList!
+  get_settlement_fails(fromDate: String!, toDate: String!, accountId: String, limit: Int, cursor: String): SettlementList!
 
   # Balances
   get_cash_balance(accountId: String!, currency: String!, asOfDate: String!): CashBalance
-  get_cash_balances(accountId: String!, asOfDate: String!, skip: Int): CashBalanceList!
+  get_cash_balances(accountId: String!, asOfDate: String!, limit: Int, cursor: String): CashBalanceList!
   get_projected_balance(accountId: String!, currency: String!, asOfDate: String!): ProjectedBalance
 }

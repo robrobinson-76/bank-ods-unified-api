@@ -3,7 +3,8 @@ from typing import Any
 
 import pymongo.errors
 from bank_ods.db.client import get_collection
-from bank_ods.services._common import clamp_limit, clamp_skip, date_window, serialize_doc
+from bank_ods.services._common import date_window, serialize_doc
+from bank_ods.services.pagination import DEFAULT_LIMIT, InvalidCursorError, paginate
 
 logger = logging.getLogger("bank_ods.services")
 
@@ -27,12 +28,13 @@ async def get_transactions(
     to_date: str,
     status: str | None = None,
     transaction_type: str | None = None,
-    limit: int = 50,
-    skip: int = 0,
+    limit: int = DEFAULT_LIMIT,
+    cursor: str | None = None,
 ) -> dict:
     """Query transactions for an account within an inclusive date range (YYYY-MM-DD).
 
-    count is the TOTAL number of matching documents; data is the requested page.
+    data is one page; while page_info.has_more, pass page_info.next_cursor
+    back as cursor to fetch the next page.
     """
     try:
         col = get_collection("transactions")
@@ -44,11 +46,9 @@ async def get_transactions(
             query["status"] = status
         if transaction_type:
             query["transactionType"] = transaction_type
-        total = await col.count_documents(query)
-        n = clamp_limit(limit)
-        cursor = col.find(query, {"_id": 0}).sort("tradeDate", -1).skip(clamp_skip(skip)).limit(n)
-        docs = await cursor.to_list(length=n)
-        return {"count": total, "data": [serialize_doc(d) for d in docs]}
+        return await paginate(col, query, [("tradeDate", -1)], limit, cursor)
+    except InvalidCursorError as e:
+        return {"error": str(e), "code": "INVALID_CURSOR"}
     except ValueError as e:
         return {"error": f"Invalid date: {e}", "code": "INVALID_DATE"}
     except pymongo.errors.PyMongoError:
@@ -90,7 +90,7 @@ async def get_transaction_summary(
             })
             for r in rows
         ]
-        return {"count": len(data), "data": data}
+        return {"data": data}
     except ValueError as e:
         return {"error": f"Invalid date: {e}", "code": "INVALID_DATE"}
     except pymongo.errors.PyMongoError:

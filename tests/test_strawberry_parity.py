@@ -48,37 +48,57 @@ async def test_parity4_get_account(rest_client, gql_client, sb_client, first_acc
         assert service[key] == rest[key] == ariadne[key] == sb[key]
 
 
-async def test_parity4_list_accounts_skip(rest_client, gql_client, sb_client):
-    q = "{ list_accounts(limit: 20, skip: 1) { count data { accountId } } }"
+async def test_parity4_list_accounts_cursor(rest_client, gql_client, sb_client):
+    """Page 1 cursors are identical everywhere; following one yields the same page 2."""
+    page1 = await svc_accounts.list_accounts(limit=2)
+    q1 = "{ list_accounts(limit: 2) { data { accountId } pageInfo { hasMore nextCursor } } }"
 
-    service = await svc_accounts.list_accounts(limit=20, skip=1)
-    rest = (await rest_client.get("/accounts", params={"limit": 20, "skip": 1})).json()
-    ariadne = (await gql_query(gql_client, q))["data"]["list_accounts"]
-    sb = (await gql_query(sb_client, q))["data"]["list_accounts"]
+    rest1 = (await rest_client.get("/accounts", params={"limit": 2})).json()
+    ariadne1 = (await gql_query(gql_client, q1))["data"]["list_accounts"]
+    sb1 = (await gql_query(sb_client, q1))["data"]["list_accounts"]
 
-    assert service["count"] == rest["count"] == ariadne["count"] == sb["count"]
+    cursor = page1["page_info"]["next_cursor"]
+    assert cursor == rest1["page_info"]["next_cursor"]
+    assert cursor == ariadne1["pageInfo"]["nextCursor"] == sb1["pageInfo"]["nextCursor"]
+    if cursor is None:
+        pytest.skip("Need more than 2 accounts")
+
+    q2 = f'{{ list_accounts(limit: 2, cursor: "{cursor}") {{ data {{ accountId }} }} }}'
+    service = await svc_accounts.list_accounts(limit=2, cursor=cursor)
+    rest = (await rest_client.get("/accounts", params={"limit": 2, "cursor": cursor})).json()
+    ariadne = (await gql_query(gql_client, q2))["data"]["list_accounts"]
+    sb = (await gql_query(sb_client, q2))["data"]["list_accounts"]
+
     svc_ids = [d["accountId"] for d in service["data"]]
     assert svc_ids == [d["accountId"] for d in rest["data"]]
     assert svc_ids == [d["accountId"] for d in ariadne["data"]]
     assert svc_ids == [d["accountId"] for d in sb["data"]]
 
 
-async def test_parity4_transactions_skip(rest_client, gql_client, sb_client, first_account):
+async def test_parity4_transactions_cursor(rest_client, gql_client, sb_client, first_account):
     account_id = first_account["accountId"]
+    page1 = await svc_transactions.get_transactions(
+        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=1
+    )
+    if not page1["page_info"]["has_more"]:
+        pytest.skip("Need more than 1 transaction")
+    cursor = page1["page_info"]["next_cursor"]
     q = (
-        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 20, skip: 1) '
-        f'{{ count data {{ transactionId transactionType tradeDate netAmount status }} }} }}'
+        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 20, cursor: "{cursor}") '
+        f'{{ data {{ transactionId transactionType tradeDate netAmount status }} pageInfo {{ hasMore nextCursor }} }} }}'
     )
 
     service = await svc_transactions.get_transactions(
-        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=20, skip=1
+        account_id=account_id, from_date="2020-01-01", to_date="2030-01-01",
+        limit=20, cursor=cursor,
     )
     ariadne = (await gql_query(gql_client, q))["data"]["get_transactions"]
     sb = (await gql_query(sb_client, q))["data"]["get_transactions"]
 
-    assert service["count"] == ariadne["count"] == sb["count"]
     assert sb["data"] == ariadne["data"]
-    if service["count"] > 0:
+    assert sb["pageInfo"] == ariadne["pageInfo"]
+    assert service["page_info"]["next_cursor"] == sb["pageInfo"]["nextCursor"]
+    if service["data"]:
         assert service["data"][0]["transactionId"] == sb["data"][0]["transactionId"]
 
 
@@ -86,14 +106,14 @@ async def test_parity4_transaction_summary(gql_client, sb_client, first_account)
     account_id = first_account["accountId"]
     q = (
         f'{{ get_transaction_summary(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01") '
-        f'{{ count data {{ transactionType status count totalNetAmount }} }} }}'
+        f'{{ data {{ transactionType status count totalNetAmount }} }} }}'
     )
     service = await svc_transactions.get_transaction_summary(account_id, "2020-01-01", "2030-01-01")
     ariadne = (await gql_query(gql_client, q))["data"]["get_transaction_summary"]
     sb = (await gql_query(sb_client, q))["data"]["get_transaction_summary"]
 
     assert sb == ariadne
-    assert sb["count"] == service["count"]
+    assert len(sb["data"]) == len(service["data"])
 
 
 async def test_parity4_settlement_nested_history(gql_client, sb_client, first_settled_txn):
@@ -146,17 +166,25 @@ async def test_parity4_get_security_by_sedol(gql_client, sb_client, dual_listed_
     assert sb["securityId"] == service["securityId"] == dual_listed_security["securityId"]
 
 
-async def test_parity4_settlement_fails_count(rest_client, gql_client, sb_client):
-    q = '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { count } }'
+async def test_parity4_settlement_fails_page(rest_client, gql_client, sb_client):
+    q = '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { data { settlementId } pageInfo { nextCursor } } }'
 
     service = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01")
     rest = (await rest_client.get(
         "/settlements/fails", params={"from_date": "2020-01-01", "to_date": "2030-01-01"}
     )).json()
-    ariadne = (await gql_query(gql_client, q))["data"]["get_settlement_fails"]["count"]
-    sb = (await gql_query(sb_client, q))["data"]["get_settlement_fails"]["count"]
+    ariadne = (await gql_query(gql_client, q))["data"]["get_settlement_fails"]
+    sb = (await gql_query(sb_client, q))["data"]["get_settlement_fails"]
 
-    assert service["count"] == rest["count"] == ariadne == sb
+    svc_ids = [d["settlementId"] for d in service["data"]]
+    assert svc_ids == [d["settlementId"] for d in rest["data"]]
+    assert svc_ids == [d["settlementId"] for d in ariadne["data"]]
+    assert svc_ids == [d["settlementId"] for d in sb["data"]]
+    assert (
+        service["page_info"]["next_cursor"]
+        == ariadne["pageInfo"]["nextCursor"]
+        == sb["pageInfo"]["nextCursor"]
+    )
 
 
 async def test_parity4_cash_balance(rest_client, gql_client, sb_client, first_balance):
@@ -199,12 +227,12 @@ async def test_parity4_positions(gql_client, sb_client, db, first_account):
     as_of = pos["asOfDate"].strftime("%Y-%m-%d")
     q = (
         f'{{ get_positions(accountId: "{pos["accountId"]}", asOfDate: "{as_of}") '
-        f'{{ count data {{ positionId securityId quantity marketValue unrealizedPnL positionType snapshotType asOfDate }} }} }}'
+        f'{{ data {{ positionId securityId quantity marketValue unrealizedPnL positionType snapshotType asOfDate }} pageInfo {{ hasMore nextCursor }} }} }}'
     )
     ariadne = (await gql_query(gql_client, q))["data"]["get_positions"]
     sb = (await gql_query(sb_client, q))["data"]["get_positions"]
     assert sb == ariadne
-    assert sb["count"] > 0
+    assert sb["data"]
 
 
 # ── Schema contract comparison ────────────────────────────────────────────────
@@ -229,7 +257,7 @@ fragment T on __Type {
 """
 
 _CONTRACT_TYPES = [
-    "Query", "DateTime", "Decimal",
+    "Query", "DateTime", "Decimal", "PageInfo",
     "Account", "AccountList", "ClientMaster",
     "Security", "SecurityList", "Listing",
     "Transaction", "TransactionList", "Position", "PositionList",

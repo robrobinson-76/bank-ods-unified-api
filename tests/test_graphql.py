@@ -18,27 +18,44 @@ async def test_gql_health(gql_client):
 async def test_gql_list_accounts(gql_client):
     result = await gql_query(
         gql_client,
-        "{ list_accounts(limit: 3) { count data { accountId client { clientName } status } } }",
+        "{ list_accounts(limit: 3) { data { accountId client { clientName } status } pageInfo { hasMore nextCursor } } }",
     )
     assert "errors" not in result
     payload = result["data"]["list_accounts"]
-    assert payload["count"] > 0
+    assert payload["data"]
     assert len(payload["data"]) <= 3
+    assert set(payload["pageInfo"]) == {"hasMore", "nextCursor"}
 
 
-async def test_gql_list_accounts_skip(gql_client):
-    """skip=1 via GraphQL should return one fewer account than skip=0 when total > 1."""
-    full = await gql_query(gql_client, "{ list_accounts(limit: 50, skip: 0) { count data { accountId } } }")
-    skipped = await gql_query(gql_client, "{ list_accounts(limit: 50, skip: 1) { count data { accountId } } }")
+async def test_gql_list_accounts_cursor(gql_client):
+    """Following nextCursor resumes exactly where the previous page ended."""
+    full = await gql_query(gql_client, "{ list_accounts(limit: 50) { data { accountId } } }")
+    page1 = await gql_query(gql_client, "{ list_accounts(limit: 1) { data { accountId } pageInfo { hasMore nextCursor } } }")
     assert "errors" not in full
-    assert "errors" not in skipped
-    total = full["data"]["list_accounts"]["count"]
-    if total > 1:
-        assert skipped["data"]["list_accounts"]["count"] == total
-        assert (
-            skipped["data"]["list_accounts"]["data"][0]["accountId"]
-            == full["data"]["list_accounts"]["data"][1]["accountId"]
+    assert "errors" not in page1
+    full_ids = [d["accountId"] for d in full["data"]["list_accounts"]["data"]]
+    if len(full_ids) > 1:
+        pi = page1["data"]["list_accounts"]["pageInfo"]
+        assert pi["hasMore"] is True
+        page2 = await gql_query(
+            gql_client,
+            f'{{ list_accounts(limit: 1, cursor: "{pi["nextCursor"]}") {{ data {{ accountId }} }} }}',
         )
+        assert "errors" not in page2
+        assert page2["data"]["list_accounts"]["data"][0]["accountId"] == full_ids[1]
+
+
+async def test_gql_invalid_cursor_error(gql_client):
+    # data is null at the root (non-null list field), so Ariadne responds 400;
+    # post directly instead of gql_query, which raises on non-2xx.
+    resp = await gql_client.post(
+        "/graphql/",
+        json={"query": '{ list_accounts(cursor: "garbage") { data { accountId } } }'},
+    )
+    assert resp.status_code == 400
+    result = resp.json()
+    assert result["data"] is None
+    assert result["errors"][0]["extensions"]["code"] == "INVALID_CURSOR"
 
 
 async def test_gql_get_account(gql_client, first_account):
@@ -56,34 +73,38 @@ async def test_gql_get_account(gql_client, first_account):
 async def test_gql_get_transactions(gql_client, first_account):
     result = await gql_query(
         gql_client,
-        f'{{ get_transactions(accountId: "{first_account["accountId"]}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 5) {{ count data {{ transactionId status }} }} }}',
+        f'{{ get_transactions(accountId: "{first_account["accountId"]}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 5) {{ data {{ transactionId status }} pageInfo {{ hasMore }} }} }}',
     )
     assert "errors" not in result
     payload = result["data"]["get_transactions"]
-    assert "count" in payload
+    assert "pageInfo" in payload
     assert len(payload["data"]) <= 5
 
 
-async def test_gql_get_transactions_skip(gql_client, first_account):
-    """skip=1 offsets results; item[0] of skipped page == item[1] of full page."""
+async def test_gql_get_transactions_cursor(gql_client, first_account):
+    """Following nextCursor resumes exactly where the previous page ended."""
     account_id = first_account["accountId"]
+    base = f'accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01"'
     full = await gql_query(
         gql_client,
-        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 200, skip: 0) {{ count data {{ transactionId }} }} }}',
+        f'{{ get_transactions({base}, limit: 200) {{ data {{ transactionId }} }} }}',
     )
-    skipped = await gql_query(
+    page1 = await gql_query(
         gql_client,
-        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 200, skip: 1) {{ count data {{ transactionId }} }} }}',
+        f'{{ get_transactions({base}, limit: 1) {{ data {{ transactionId }} pageInfo {{ hasMore nextCursor }} }} }}',
     )
     assert "errors" not in full
-    assert "errors" not in skipped
-    total = full["data"]["get_transactions"]["count"]
-    if total > 1:
-        assert skipped["data"]["get_transactions"]["count"] == total
-        assert (
-            skipped["data"]["get_transactions"]["data"][0]["transactionId"]
-            == full["data"]["get_transactions"]["data"][1]["transactionId"]
+    assert "errors" not in page1
+    full_ids = [d["transactionId"] for d in full["data"]["get_transactions"]["data"]]
+    if len(full_ids) > 1:
+        pi = page1["data"]["get_transactions"]["pageInfo"]
+        assert pi["hasMore"] is True
+        page2 = await gql_query(
+            gql_client,
+            f'{{ get_transactions({base}, limit: 1, cursor: "{pi["nextCursor"]}") {{ data {{ transactionId }} }} }}',
         )
+        assert "errors" not in page2
+        assert page2["data"]["get_transactions"]["data"][0]["transactionId"] == full_ids[1]
 
 
 # ── Settlements ───────────────────────────────────────────────────────────────
@@ -91,10 +112,10 @@ async def test_gql_get_transactions_skip(gql_client, first_account):
 async def test_gql_settlement_fails(gql_client):
     result = await gql_query(
         gql_client,
-        '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { count } }',
+        '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { data { settlementId } pageInfo { hasMore } } }',
     )
     assert "errors" not in result
-    assert result["data"]["get_settlement_fails"]["count"] >= 0
+    assert isinstance(result["data"]["get_settlement_fails"]["data"], list)
 
 
 # ── Balances ──────────────────────────────────────────────────────────────────
@@ -103,7 +124,7 @@ async def test_gql_cash_balances(gql_client, first_balance):
     as_of = first_balance["asOfDate"].strftime("%Y-%m-%d")
     result = await gql_query(
         gql_client,
-        f'{{ get_cash_balances(accountId: "{first_balance["accountId"]}", asOfDate: "{as_of}") {{ count data {{ currency closingBalance }} }} }}',
+        f'{{ get_cash_balances(accountId: "{first_balance["accountId"]}", asOfDate: "{as_of}") {{ data {{ currency closingBalance }} }} }}',
     )
     assert "errors" not in result
-    assert result["data"]["get_cash_balances"]["count"] > 0
+    assert result["data"]["get_cash_balances"]["data"]

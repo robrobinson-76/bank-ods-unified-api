@@ -47,29 +47,47 @@ async def test_gr_parity_get_account(rest_client, gql_client, gr_client, first_a
         assert service[key] == rest[key] == ariadne[key] == gr[key]
 
 
-async def test_gr_parity_list_accounts_skip(gql_client, gr_client):
-    q = "{ list_accounts(limit: 20, skip: 1) { count data { accountId } } }"
-    ariadne = (await gql_query(gql_client, q))["data"]["list_accounts"]
-    gr = (await gql_query(gr_client, q))["data"]["list_accounts"]
-    assert gr == ariadne
+async def test_gr_parity_list_accounts_cursor(gql_client, gr_client):
+    q1 = "{ list_accounts(limit: 2) { data { accountId } pageInfo { hasMore nextCursor } } }"
+    ariadne1 = (await gql_query(gql_client, q1))["data"]["list_accounts"]
+    gr1 = (await gql_query(gr_client, q1))["data"]["list_accounts"]
+    assert gr1 == ariadne1
+
+    cursor = ariadne1["pageInfo"]["nextCursor"]
+    if cursor is None:
+        pytest.skip("Need more than 2 accounts")
+    q2 = f'{{ list_accounts(limit: 2, cursor: "{cursor}") {{ data {{ accountId }} pageInfo {{ hasMore nextCursor }} }} }}'
+    ariadne2 = (await gql_query(gql_client, q2))["data"]["list_accounts"]
+    gr2 = (await gql_query(gr_client, q2))["data"]["list_accounts"]
+    assert gr2 == ariadne2
+    assert gr2["data"] != gr1["data"]
 
 
-async def test_gr_parity_transactions_skip(gql_client, gr_client, first_account):
+async def test_gr_parity_transactions_cursor(gql_client, gr_client, first_account):
     account_id = first_account["accountId"]
-    q = (
-        f'{{ get_transactions(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01", limit: 20, skip: 1) '
-        f'{{ count data {{ transactionId transactionType tradeDate netAmount status }} }} }}'
+    base = f'accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01"'
+    q1 = f'{{ get_transactions({base}, limit: 1) {{ data {{ transactionId }} pageInfo {{ hasMore nextCursor }} }} }}'
+    ariadne1 = (await gql_query(gql_client, q1))["data"]["get_transactions"]
+    gr1 = (await gql_query(gr_client, q1))["data"]["get_transactions"]
+    assert gr1 == ariadne1
+
+    cursor = ariadne1["pageInfo"]["nextCursor"]
+    if cursor is None:
+        pytest.skip("Need more than 1 transaction")
+    q2 = (
+        f'{{ get_transactions({base}, limit: 20, cursor: "{cursor}") '
+        f'{{ data {{ transactionId transactionType tradeDate netAmount status }} pageInfo {{ hasMore nextCursor }} }} }}'
     )
-    ariadne = (await gql_query(gql_client, q))["data"]["get_transactions"]
-    gr = (await gql_query(gr_client, q))["data"]["get_transactions"]
-    assert gr == ariadne
+    ariadne2 = (await gql_query(gql_client, q2))["data"]["get_transactions"]
+    gr2 = (await gql_query(gr_client, q2))["data"]["get_transactions"]
+    assert gr2 == ariadne2
 
 
 async def test_gr_parity_transaction_summary(gql_client, gr_client, first_account):
     account_id = first_account["accountId"]
     q = (
         f'{{ get_transaction_summary(accountId: "{account_id}", fromDate: "2020-01-01", toDate: "2030-01-01") '
-        f'{{ count data {{ transactionType status count totalNetAmount }} }} }}'
+        f'{{ data {{ transactionType status count totalNetAmount }} }} }}'
     )
     ariadne = (await gql_query(gql_client, q))["data"]["get_transaction_summary"]
     gr = (await gql_query(gr_client, q))["data"]["get_transaction_summary"]
@@ -120,12 +138,15 @@ async def test_gr_parity_get_security_by_sedol(gql_client, gr_client, dual_liste
     assert gr["securityId"] == service["securityId"] == dual_listed_security["securityId"]
 
 
-async def test_gr_parity_settlement_fails_count(gql_client, gr_client):
-    q = '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { count } }'
+async def test_gr_parity_settlement_fails_page(gql_client, gr_client):
+    q = '{ get_settlement_fails(fromDate: "2020-01-01", toDate: "2030-01-01") { data { settlementId } pageInfo { hasMore nextCursor } } }'
     service = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01")
-    ariadne = (await gql_query(gql_client, q))["data"]["get_settlement_fails"]["count"]
-    gr = (await gql_query(gr_client, q))["data"]["get_settlement_fails"]["count"]
-    assert service["count"] == ariadne == gr
+    ariadne = (await gql_query(gql_client, q))["data"]["get_settlement_fails"]
+    gr = (await gql_query(gr_client, q))["data"]["get_settlement_fails"]
+    assert gr == ariadne
+    svc_ids = [d["settlementId"] for d in service["data"]]
+    assert svc_ids == [d["settlementId"] for d in gr["data"]]
+    assert service["page_info"]["next_cursor"] == gr["pageInfo"]["nextCursor"]
 
 
 async def test_gr_parity_cash_balance(gql_client, gr_client, first_balance):
@@ -160,12 +181,12 @@ async def test_gr_parity_positions(gql_client, gr_client, db):
     as_of = pos["asOfDate"].strftime("%Y-%m-%d")
     q = (
         f'{{ get_positions(accountId: "{pos["accountId"]}", asOfDate: "{as_of}") '
-        f'{{ count data {{ positionId securityId quantity marketValue unrealizedPnL positionType snapshotType asOfDate }} }} }}'
+        f'{{ data {{ positionId securityId quantity marketValue unrealizedPnL positionType snapshotType asOfDate }} pageInfo {{ hasMore nextCursor }} }} }}'
     )
     ariadne = (await gql_query(gql_client, q))["data"]["get_positions"]
     gr = (await gql_query(gr_client, q))["data"]["get_positions"]
     assert gr == ariadne
-    assert gr["count"] > 0
+    assert gr["data"]
 
 
 # ── Schema contract comparison ────────────────────────────────────────────────

@@ -36,7 +36,7 @@ from bank_ods.graphql_strawberry.types import (
     PositionType, PositionList,
     SettlementType, SettlementList,
     CashBalanceType, CashBalanceList,
-    ProjectedBalance,
+    PageInfo, ProjectedBalance,
 )
 
 
@@ -51,9 +51,10 @@ def _entity_list(result: dict, model_cls, type_cls, list_cls):
     """Service list envelope → Strawberry list wrapper; error envelope → raise."""
     if "error" in result:
         raise RuntimeError(result["error"])
+    pi = result["page_info"]
     return list_cls(
-        count=result["count"],
         data=[type_cls.from_pydantic(model_cls.model_validate(d)) for d in result["data"]],
+        pageInfo=PageInfo(hasMore=pi["has_more"], nextCursor=pi["next_cursor"]),
     )
 
 
@@ -70,10 +71,10 @@ class Query:
     async def list_accounts(
         self, clientId: Optional[str] = None, status: Optional[str] = None,
         lei: Optional[str] = None, domicile: Optional[str] = None,
-        limit: Optional[int] = 20, skip: Optional[int] = 0,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
     ) -> AccountList:
         result = await svc_accounts.list_accounts(
-            clientId, status, lei, domicile, limit if limit is not None else 20, skip or 0
+            clientId, status, lei, domicile, limit if limit is not None else 50, cursor
         )
         return _entity_list(result, AccountModel, AccountType, AccountList)
 
@@ -91,10 +92,10 @@ class Query:
     async def list_securities(
         self, assetClass: Optional[str] = None, ticker: Optional[str] = None,
         status: Optional[str] = None, sedol: Optional[str] = None,
-        limit: Optional[int] = 50, skip: Optional[int] = 0,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
     ) -> SecurityList:
         result = await svc_securities.list_securities(
-            assetClass, ticker, status, sedol, limit if limit is not None else 50, skip or 0
+            assetClass, ticker, status, sedol, limit if limit is not None else 50, cursor
         )
         return _entity_list(result, SecurityModel, SecurityType, SecurityList)
 
@@ -108,11 +109,11 @@ class Query:
     async def get_transactions(
         self, accountId: str, fromDate: str, toDate: str,
         status: Optional[str] = None, transactionType: Optional[str] = None,
-        limit: Optional[int] = 50, skip: Optional[int] = 0,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
     ) -> TransactionList:
         result = await svc_transactions.get_transactions(
             accountId, fromDate, toDate, status, transactionType,
-            limit if limit is not None else 50, skip or 0,
+            limit if limit is not None else 50, cursor,
         )
         return _entity_list(result, TransactionModel, TransactionType, TransactionList)
 
@@ -122,7 +123,6 @@ class Query:
         if "error" in result:
             raise RuntimeError(result["error"])
         return TransactionSummaryList(
-            count=result["count"],
             data=[TransactionSummaryItem(**item) for item in result["data"]],
         )
 
@@ -133,15 +133,23 @@ class Query:
         return _item(await svc_positions.get_position(accountId, securityId, asOfDate), PositionModel, PositionType)
 
     @strawberry.field
-    async def get_positions(self, accountId: str, asOfDate: str, skip: Optional[int] = 0) -> PositionList:
-        result = await svc_positions.get_positions(accountId, asOfDate, skip or 0)
+    async def get_positions(
+        self, accountId: str, asOfDate: str,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
+    ) -> PositionList:
+        result = await svc_positions.get_positions(
+            accountId, asOfDate, limit if limit is not None else 50, cursor
+        )
         return _entity_list(result, PositionModel, PositionType, PositionList)
 
     @strawberry.field
     async def get_position_history(
-        self, accountId: str, securityId: str, fromDate: str, toDate: str, skip: Optional[int] = 0,
+        self, accountId: str, securityId: str, fromDate: str, toDate: str,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
     ) -> PositionList:
-        result = await svc_positions.get_position_history(accountId, securityId, fromDate, toDate, skip or 0)
+        result = await svc_positions.get_position_history(
+            accountId, securityId, fromDate, toDate, limit if limit is not None else 50, cursor
+        )
         return _entity_list(result, PositionModel, PositionType, PositionList)
 
     # ── Settlements ───────────────────────────────────────────────────────
@@ -156,16 +164,22 @@ class Query:
 
     @strawberry.field
     async def get_settlements(
-        self, accountId: str, settlementDate: str, status: Optional[str] = None, skip: Optional[int] = 0,
+        self, accountId: str, settlementDate: str, status: Optional[str] = None,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
     ) -> SettlementList:
-        result = await svc_settlements.get_settlements(accountId, settlementDate, status, skip or 0)
+        result = await svc_settlements.get_settlements(
+            accountId, settlementDate, status, limit if limit is not None else 50, cursor
+        )
         return _entity_list(result, SettlementModel, SettlementType, SettlementList)
 
     @strawberry.field
     async def get_settlement_fails(
-        self, fromDate: str, toDate: str, accountId: Optional[str] = None, skip: Optional[int] = 0,
+        self, fromDate: str, toDate: str, accountId: Optional[str] = None,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
     ) -> SettlementList:
-        result = await svc_settlements.get_settlement_fails(fromDate, toDate, accountId, skip or 0)
+        result = await svc_settlements.get_settlement_fails(
+            fromDate, toDate, accountId, limit if limit is not None else 50, cursor
+        )
         return _entity_list(result, SettlementModel, SettlementType, SettlementList)
 
     # ── Balances ──────────────────────────────────────────────────────────
@@ -175,8 +189,13 @@ class Query:
         return _item(await svc_balances.get_cash_balance(accountId, currency, asOfDate), CashBalanceModel, CashBalanceType)
 
     @strawberry.field
-    async def get_cash_balances(self, accountId: str, asOfDate: str, skip: Optional[int] = 0) -> CashBalanceList:
-        result = await svc_balances.get_cash_balances(accountId, asOfDate, skip or 0)
+    async def get_cash_balances(
+        self, accountId: str, asOfDate: str,
+        limit: Optional[int] = 50, cursor: Optional[str] = None,
+    ) -> CashBalanceList:
+        result = await svc_balances.get_cash_balances(
+            accountId, asOfDate, limit if limit is not None else 50, cursor
+        )
         return _entity_list(result, CashBalanceModel, CashBalanceType, CashBalanceList)
 
     @strawberry.field

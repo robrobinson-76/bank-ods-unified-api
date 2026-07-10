@@ -13,9 +13,10 @@ async def get_settlement_fails(
     from_date: str,
     to_date: str,
     account_id: Optional[str] = None,
-    skip: int = 0,
+    limit: int = 50,
+    cursor: Optional[str] = None,
 ):
-    return check(await svc.get_settlement_fails(from_date, to_date, account_id, skip))
+    return check(await svc.get_settlement_fails(from_date, to_date, account_id, limit, cursor))
 
 
 @router.get("/by-transaction/{transaction_id}")
@@ -33,6 +34,7 @@ async def get_settlements(
     account_id: str,
     settlement_date: str,
     status: Optional[str] = None,
-    skip: int = 0,
+    limit: int = 50,
+    cursor: Optional[str] = None,
 ):
-    return check(await svc.get_settlements(account_id, settlement_date, status, skip))
+    return check(await svc.get_settlements(account_id, settlement_date, status, limit, cursor))

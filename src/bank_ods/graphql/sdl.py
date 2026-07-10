@@ -94,7 +94,7 @@ def _type_block(model: type[BankDocument]) -> str:
 
 def _list_type_block(model: type[BankDocument]) -> str:
     name = model.__name__
-    return f"type {name}List {{\n  count: Int!\n  data: [{name}!]!\n}}"
+    return f"type {name}List {{\n  data: [{name}!]!\n  pageInfo: PageInfo!\n}}"
 
 
 # ── Query root ────────────────────────────────────────────────────────────────
@@ -102,32 +102,32 @@ def _list_type_block(model: type[BankDocument]) -> str:
 _QUERY_FIELDS = """
   # Accounts
   get_account(accountId: String!): Account
-  list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, skip: Int): AccountList!
+  list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, cursor: String): AccountList!
 
   # Securities
   get_security(securityId: String!): Security
   get_security_by_sedol(sedol: String!): Security
-  list_securities(assetClass: String, ticker: String, status: String, sedol: String, limit: Int, skip: Int): SecurityList!
+  list_securities(assetClass: String, ticker: String, status: String, sedol: String, limit: Int, cursor: String): SecurityList!
 
   # Transactions
   get_transaction(transactionId: String!): Transaction
-  get_transactions(accountId: String!, fromDate: String!, toDate: String!, status: String, transactionType: String, limit: Int, skip: Int): TransactionList!
+  get_transactions(accountId: String!, fromDate: String!, toDate: String!, status: String, transactionType: String, limit: Int, cursor: String): TransactionList!
   get_transaction_summary(accountId: String!, fromDate: String!, toDate: String!): TransactionSummaryList!
 
   # Positions
   get_position(accountId: String!, securityId: String!, asOfDate: String!): Position
-  get_positions(accountId: String!, asOfDate: String!, skip: Int): PositionList!
-  get_position_history(accountId: String!, securityId: String!, fromDate: String!, toDate: String!, skip: Int): PositionList!
+  get_positions(accountId: String!, asOfDate: String!, limit: Int, cursor: String): PositionList!
+  get_position_history(accountId: String!, securityId: String!, fromDate: String!, toDate: String!, limit: Int, cursor: String): PositionList!
 
   # Settlements
   get_settlement(settlementId: String!): Settlement
   get_settlement_status(transactionId: String!): Settlement
-  get_settlements(accountId: String!, settlementDate: String!, status: String, skip: Int): SettlementList!
-  get_settlement_fails(fromDate: String!, toDate: String!, accountId: String, skip: Int): SettlementList!
+  get_settlements(accountId: String!, settlementDate: String!, status: String, limit: Int, cursor: String): SettlementList!
+  get_settlement_fails(fromDate: String!, toDate: String!, accountId: String, limit: Int, cursor: String): SettlementList!
 
   # Balances
   get_cash_balance(accountId: String!, currency: String!, asOfDate: String!): CashBalance
-  get_cash_balances(accountId: String!, asOfDate: String!, skip: Int): CashBalanceList!
+  get_cash_balances(accountId: String!, asOfDate: String!, limit: Int, cursor: String): CashBalanceList!
   get_projected_balance(accountId: String!, currency: String!, asOfDate: String!): ProjectedBalance
 """
 
@@ -140,7 +140,6 @@ type TransactionSummaryItem {
 }
 
 type TransactionSummaryList {
-  count: Int!
   data: [TransactionSummaryItem!]!
 }
 
@@ -161,6 +160,8 @@ def generate_sdl() -> str:
     blocks: list[str] = [
         "scalar DateTime",
         "scalar Decimal",
+        "",
+        "type PageInfo {\n  hasMore: Boolean!\n  nextCursor: String\n}",
         "",
     ]
 

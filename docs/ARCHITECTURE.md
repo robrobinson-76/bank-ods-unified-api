@@ -143,7 +143,8 @@ mongo-mcp-test/
 │       │   └── indexes.py          ← ensure_indexes() — idempotent, called on startup
 │       │
 │       ├── services/               ← 18 async business logic functions (only MongoDB access here)
-│       │   ├── _common.py          ← date helpers (day_range/date_window), clamps, serialize_doc()
+│       │   ├── _common.py          ← date helpers (day_range/date_window), serialize_doc()
+│       │   ├── pagination.py       ← keyset cursor pagination: paginate(), cursor codec, seek predicate
 │       │   ├── accounts.py         ← get_account, list_accounts
 │       │   ├── securities.py       ← get_security, get_security_by_sedol, list_securities
 │       │   ├── transactions.py     ← get_transaction, get_transactions, get_transaction_summary
@@ -177,10 +178,11 @@ mongo-mcp-test/
 │
 ├── tests/
 │   ├── conftest.py                 ← Session-scoped fixtures: db, first_account, rest_client, gql_client
+│   ├── test_pagination.py          ← Keyset cursor helper: round-trip, rejection, walks, stability
 │   ├── test_services.py            ← Direct service function tests (happy path, NOT_FOUND, filters, pagination)
-│   ├── test_rest.py                ← REST endpoint tests (status codes, response shapes, health, skip)
-│   ├── test_graphql.py             ← GraphQL query validation (health, skip)
-│   └── test_parity.py              ← Cross-layer equivalence: REST == GraphQL == service (including skip)
+│   ├── test_rest.py                ← REST endpoint tests (status codes, response shapes, health, cursors)
+│   ├── test_graphql.py             ← GraphQL query validation (health, cursors)
+│   └── test_parity.py              ← Cross-layer equivalence: REST == GraphQL == service (incl. cursor strings)
 │
 ├── pyproject.toml
 ├── .env.example
@@ -461,9 +463,11 @@ All service functions are `async def`. All accept and return plain Python dicts 
 
 Every service function returns one of:
 - `{...data fields...}` — success (single item)
-- `{"count": N, "data": [...]}` — success (list); **count is the TOTAL number of matching documents**, data is one page
+- `{"data": [...], "page_info": {"has_more": bool, "next_cursor": str|null}}` — success (list); data is one page, page_info carries the keyset cursor (see Pagination)
+- `{"data": [...]}` — success (non-paginated aggregation: `get_transaction_summary`)
 - `{"error": "...", "code": "NOT_FOUND"}` — item not found
 - `{"error": "...", "code": "INVALID_DATE"}` — malformed date parameter (REST maps to 400)
+- `{"error": "...", "code": "INVALID_CURSOR"}` — malformed, tampered, or foreign pagination cursor (REST maps to 400)
 - `{"error": "Database error", "code": "MONGO_ERROR"}` — database error (details are logged server-side, never sent to clients)
 
 Functions never raise exceptions to callers. Transport layers translate these envelopes to appropriate protocol-level errors.
@@ -481,7 +485,7 @@ A date parameter (`as_of_date`, `settlement_date`) means the **whole calendar da
 
 ```python
 get_account(account_id: str) → dict
-list_accounts(client_id=None, status=None, lei=None, domicile=None, limit=20, skip=0) → dict
+list_accounts(client_id=None, status=None, lei=None, domicile=None, limit=50, cursor=None) → dict
 # client_id/lei/domicile match the embedded client-master snapshot
 ```
 
@@ -490,24 +494,24 @@ list_accounts(client_id=None, status=None, lei=None, domicile=None, limit=20, sk
 ```python
 get_security(security_id: str) → dict
 get_security_by_sedol(sedol: str) → dict   # matches any listing's market-level SEDOL
-list_securities(asset_class=None, ticker=None, status=None, sedol=None, limit=50, skip=0) → dict
+list_securities(asset_class=None, ticker=None, status=None, sedol=None, limit=50, cursor=None) → dict
 ```
 
 ### Transactions
 
 ```python
 get_transaction(transaction_id: str) → dict
-get_transactions(account_id, from_date, to_date, status=None, transaction_type=None, limit=50, skip=0) → dict
+get_transactions(account_id, from_date, to_date, status=None, transaction_type=None, limit=50, cursor=None) → dict
 get_transaction_summary(account_id, from_date, to_date) → dict
-# summary returns: {count, data: [{transactionType, status, count, totalNetAmount}]}
+# summary is not paginated; returns: {data: [{transactionType, status, count, totalNetAmount}]}
 ```
 
 ### Positions
 
 ```python
 get_position(account_id, security_id, as_of_date) → dict
-get_positions(account_id, as_of_date, skip=0) → dict
-get_position_history(account_id, security_id, from_date, to_date, skip=0) → dict
+get_positions(account_id, as_of_date, limit=50, cursor=None) → dict
+get_position_history(account_id, security_id, from_date, to_date, limit=50, cursor=None) → dict
 # history is sorted ascending by asOfDate
 ```
 
@@ -516,22 +520,28 @@ get_position_history(account_id, security_id, from_date, to_date, skip=0) → di
 ```python
 get_settlement(settlement_id) → dict
 get_settlement_status(transaction_id) → dict   # lookup by transaction, not settlement ID
-get_settlements(account_id, settlement_date, status=None, skip=0) → dict
-get_settlement_fails(from_date, to_date, account_id=None, skip=0) → dict
+get_settlements(account_id, settlement_date, status=None, limit=50, cursor=None) → dict
+get_settlement_fails(from_date, to_date, account_id=None, limit=50, cursor=None) → dict
 ```
 
 ### Balances
 
 ```python
 get_cash_balance(account_id, currency, as_of_date) → dict
-get_cash_balances(account_id, as_of_date, skip=0) → dict
+get_cash_balances(account_id, as_of_date, limit=50, cursor=None) → dict
 get_projected_balance(account_id, currency, as_of_date) → dict
 # projected returns: {accountId, currency, asOfDate, closingBalance, pendingCredits, pendingDebits, projectedBalance}
 ```
 
-### Pagination
+### Pagination — keyset cursors
 
-All list operations accept `skip: int = 0` (clamped to ≥0) and, where exposed, `limit` (clamped to `[1, 200]`). Page sizes: accounts 20 (default), securities/transactions 50 (default), positions/settlements 200 (fixed), balances 50 (fixed). `count` is always the total; more pages exist while `skip + len(data) < count`.
+All 8 list operations take a uniform `limit: int = 50` (clamped to `[1, 200]`) and `cursor: str | None = None`. There is no offset and no total count. Every page returns `page_info`: while `has_more` is true, pass `next_cursor` back verbatim as `cursor` to fetch the next page.
+
+The implementation is a single shared helper, `services/pagination.py`:
+
+- **Keyset (seek), not offset.** Each list method declares a deterministic sort; `paginate()` appends an `("_id", 1)` tie-breaker so the total order is always unique, fetches `limit + 1` documents to compute `has_more`, and encodes the last row's sort values into the cursor. The next page resumes with a range predicate (`$gt`/`$lt` `$or`-expansion), so page N+1 costs the same as page 1 regardless of depth, and rows are never duplicated or dropped when documents are inserted behind the current position.
+- **Opaque cursor.** base64url(JSON) `{v, f, k}`: a format version, an 8-hex fingerprint of (collection, sort spec) that rejects cursors replayed against a different query shape, and the type-tagged sort-key values (datetime/ObjectId/Decimal128 round-trip losslessly). Cursors are deterministic — the same page boundary yields a byte-identical cursor in every transport, which the parity tests assert. Clients must treat cursors as opaque tokens; any malformed or foreign cursor yields `INVALID_CURSOR`.
+- **Sort orders** (before the `_id` tie-breaker): accounts `accountId ↑`, securities `securityId ↑`, transactions `tradeDate ↓`, positions `securityId ↑`, position history `asOfDate ↑`, settlements `settlementId ↑`, settlement fails `settlementDate ↓`, cash balances `currency ↑`.
 
 ---
 
@@ -554,19 +564,19 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Entry point: `uvicorn bank_ods.rest:app --port 8000`
 - Docs: `http://localhost:8000/docs` (Swagger UI)
 - Health: `GET /health` (liveness) → `{"status": "ok"}`; `GET /ready` (readiness, pings MongoDB) → `{"status": "ready"}` or 503
-- Error mapping: HTTP 400 (INVALID_DATE), 404 (NOT_FOUND), 500 (MONGO_ERROR) via `rest/errors.py check()`
+- Error mapping: HTTP 400 (INVALID_DATE, INVALID_CURSOR), 404 (NOT_FOUND), 500 (MONGO_ERROR) via `rest/errors.py check()`
 - 6 routers: accounts, securities, transactions, positions, settlements, balances
 
 **Endpoint summary:**
 
 | Prefix | Endpoints |
 |---|---|
-| `/accounts` | GET `/{id}`, GET `?client_id&status&lei&domicile&limit&skip` |
-| `/securities` | GET `/{id}`, GET `/sedol/{sedol}`, GET `?asset_class&ticker&status&sedol&limit&skip` |
-| `/transactions` | GET `/{id}`, GET `?account_id&from_date&to_date&status&transaction_type&limit&skip`, GET `/summary?...` |
-| `/positions` | GET `/{account_id}?as_of_date&skip`, GET `/{account_id}/{security_id}?as_of_date`, GET `/{account_id}/{security_id}/history?from_date&to_date&skip` |
-| `/settlements` | GET `/{id}`, GET `/by-transaction/{txn_id}`, GET `?account_id&settlement_date&status&skip`, GET `/fails?from_date&to_date&account_id&skip` |
-| `/balances` | GET `/{account_id}?as_of_date&skip`, GET `/{account_id}/{currency}?as_of_date`, GET `/{account_id}/{currency}/projected?as_of_date` |
+| `/accounts` | GET `/{id}`, GET `?client_id&status&lei&domicile&limit&cursor` |
+| `/securities` | GET `/{id}`, GET `/sedol/{sedol}`, GET `?asset_class&ticker&status&sedol&limit&cursor` |
+| `/transactions` | GET `/{id}`, GET `?account_id&from_date&to_date&status&transaction_type&limit&cursor`, GET `/summary?...` |
+| `/positions` | GET `/{account_id}?as_of_date&limit&cursor`, GET `/{account_id}/{security_id}?as_of_date`, GET `/{account_id}/{security_id}/history?from_date&to_date&limit&cursor` |
+| `/settlements` | GET `/{id}`, GET `/by-transaction/{txn_id}`, GET `?account_id&settlement_date&status&limit&cursor`, GET `/fails?from_date&to_date&account_id&limit&cursor` |
+| `/balances` | GET `/{account_id}?as_of_date&limit&cursor`, GET `/{account_id}/{currency}?as_of_date`, GET `/{account_id}/{currency}/projected?as_of_date` |
 | `/health` | GET |
 
 ### GraphQL — `bank_ods.graphql`
@@ -576,7 +586,7 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Endpoint: `POST http://localhost:8001/graphql`
 - Health: `GET /health` → `{"status": "ok"}`
 - SDL generated at runtime from the ENTITIES registry by `sdl.py`
-- 18 query fields with `skip: Int` on all list operations
+- 18 query fields with `limit: Int, cursor: String` on all list operations; list wrappers carry `pageInfo: PageInfo! { hasMore, nextCursor }`
 - `DateTime` custom scalar serializes datetime to ISO string (UTC offset included); `Decimal` custom scalar serializes monetary values as exact strings
 - Health: `GET /health` (liveness); `GET /ready` (readiness, pings MongoDB)
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
@@ -595,9 +605,9 @@ Two additional implementations of the identical GraphQL contract, built to evalu
 |---|---|
 | accounts | accountId (unique), client.clientId, client.lei, status |
 | securities | securityId (unique), isin (unique sparse), ticker, assetClass, listings.sedol (unique partial multikey) |
-| transactions | transactionId (unique), (accountId, tradeDate desc), status, settlementDate, securityId |
+| transactions | transactionId (unique), (accountId, tradeDate desc, _id), status, settlementDate, securityId |
 | positions | (accountId, securityId, asOfDate) compound unique, asOfDate, accountId |
-| settlements | settlementId (unique), transactionId, (accountId, settlementDate), status |
+| settlements | settlementId (unique), transactionId, (accountId, settlementDate), (status, settlementDate desc, _id) |
 | cash_balances | (accountId, currency, asOfDate) compound unique, asOfDate |
 
 The compound unique index on `positions` and `cash_balances` enforces the append-only snapshot invariant: only one document per (account, security/currency, date).
@@ -612,17 +622,18 @@ Tests require a running MongoDB with seeded data (`python scripts/seed_data.py`)
 
 | File | What it tests |
 |---|---|
-| `test_services.py` | Service functions directly — happy paths, NOT_FOUND, filters, aggregation, skip pagination |
-| `test_rest.py` | REST endpoint HTTP status codes, response shapes, `/health`, 404s, skip pagination |
-| `test_graphql.py` | GraphQL query structure, `/health`, skip pagination |
-| `test_parity.py` | **Cross-layer equivalence** — REST == GraphQL == service for every operation including skip |
-| `test_mcp.py` | MCP parity leg — tool surface (18 tools) + MCP tool results == service results |
+| `test_pagination.py` | Keyset cursor helper — cursor round-trip per BSON type, fingerprint/garbage rejection, seek-predicate shape, full cursor walks, mid-iteration insert stability |
+| `test_services.py` | Service functions directly — happy paths, NOT_FOUND, filters, aggregation, cursor pagination |
+| `test_rest.py` | REST endpoint HTTP status codes, response shapes, `/health`, 404s, cursor pagination, INVALID_CURSOR→400 |
+| `test_graphql.py` | GraphQL query structure, `/health`, cursor pagination, INVALID_CURSOR error extension |
+| `test_parity.py` | **Cross-layer equivalence** — REST == GraphQL == service for every operation, including byte-identical cursor strings |
+| `test_mcp.py` | MCP parity leg — tool surface (18 tools) + MCP tool results == service results, cursor follow |
 | `test_fixes.py` | Regressions: whole-day date windows, INVALID_DATE→400, securities parity, Decimal strings, UTC offsets, `/ready` |
 | `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
 | `test_master_data.py` | Reference-data integrity — SEDOL/LEI format + check digits, global SEDOL uniqueness, one primary listing per security, identical client-master snapshot across a client's accounts, parentClientId links resolve |
 | `test_strawberry_parity.py`, `test_graphene_parity.py` | Evaluation twins — see REVIEW-strawberry-graphql.md |
 
-124 tests total. All must pass before merge.
+148 tests total. All must pass before merge.
 
 ### Parity Test Pattern
 
@@ -680,7 +691,7 @@ The parity harness is the primary contract enforcement mechanism.
 
 **Decimal128 for money.** Monetary amounts, quantities, and rates are stored as MongoDB `Decimal128`, typed `decimal.Decimal` in the models, and serialized as exact strings on the wire (GraphQL `Decimal` scalar). IEEE-754 floats are never used for money.
 
-**count = total.** List envelopes return the total number of matching documents in `count` and one page in `data`, so clients can paginate without over-fetching.
+**Keyset cursors, no totals.** List envelopes return one page plus `page_info: {has_more, next_cursor}`. Keyset (seek) pagination with a uniform `_id` tie-breaker makes every page deterministic and O(1) regardless of depth, and stays consistent under concurrent inserts — properties offset/`skip` pagination cannot provide. Dropping the total count removes a second `count_documents` query per request; clients page until `has_more` is false. Cursors are opaque, deterministic, and fingerprinted to the (collection, sort) they came from.
 
 **SDL at runtime.** The GraphQL schema is generated from Pydantic models at process startup, not from a static `.graphql` file. The schema is always consistent with the Python models.
 

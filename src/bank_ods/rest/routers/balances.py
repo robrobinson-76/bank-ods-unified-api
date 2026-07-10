@@ -1,3 +1,5 @@
+from typing import Optional
+
 from fastapi import APIRouter
 
 import bank_ods.services.balances as svc
@@ -17,5 +19,7 @@ async def get_cash_balance(account_id: str, currency: str, as_of_date: str):
 
 
 @router.get("/{account_id}")
-async def get_cash_balances(account_id: str, as_of_date: str, skip: int = 0):
-    return check(await svc.get_cash_balances(account_id, as_of_date, skip))
+async def get_cash_balances(
+    account_id: str, as_of_date: str, limit: int = 50, cursor: Optional[str] = None
+):
+    return check(await svc.get_cash_balances(account_id, as_of_date, limit, cursor))

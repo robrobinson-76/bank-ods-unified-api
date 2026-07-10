@@ -21,7 +21,7 @@ class Settlement(BankDocument):
         ("settlementId", {"unique": True}),
         ("transactionId", {}),
         ([("accountId", 1), ("settlementDate", -1)], {}),
-        ("status", {}),
+        ([("status", 1), ("settlementDate", -1), ("_id", 1)], {}),
     ]
 
     settlementId: str

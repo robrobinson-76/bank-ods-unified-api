@@ -34,14 +34,6 @@ def date_window(from_date: str, to_date: str) -> dict:
     return {"$gte": day_start(from_date), "$lt": day_after(to_date)}
 
 
-def clamp_limit(limit: int, maximum: int = 200) -> int:
-    return min(max(1, limit), maximum)
-
-
-def clamp_skip(skip: int) -> int:
-    return max(0, skip)
-
-
 def serialize_doc(doc: dict) -> dict:
     return _serialize({k: v for k, v in doc.items() if k != "_id"})
 

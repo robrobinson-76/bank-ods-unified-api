@@ -93,10 +93,15 @@ class CashBalanceType(PydanticObjectType):
 
 # ── List wrappers ─────────────────────────────────────────────────────────────
 
+class PageInfo(graphene.ObjectType):
+    hasMore = graphene.Boolean(required=True)
+    nextCursor = graphene.String()
+
+
 def _list_wrapper(name: str, item_type) -> type:
     return type(name, (graphene.ObjectType,), {
-        "count": graphene.Int(required=True),
         "data": graphene.List(graphene.NonNull(item_type), required=True),
+        "pageInfo": graphene.Field(PageInfo, required=True),
     })
 
 
@@ -117,7 +122,9 @@ class TransactionSummaryItem(graphene.ObjectType):
     totalNetAmount = graphene.Decimal(required=True)
 
 
-TransactionSummaryList = _list_wrapper("TransactionSummaryList", TransactionSummaryItem)
+# Not paginated (aggregation over the full window) — data only, no pageInfo.
+class TransactionSummaryList(graphene.ObjectType):
+    data = graphene.List(graphene.NonNull(TransactionSummaryItem), required=True)
 
 
 class ProjectedBalance(graphene.ObjectType):

@@ -11,7 +11,7 @@ class Transaction(BankDocument):
     COLLECTION: ClassVar[str] = "transactions"
     INDEXES: ClassVar[list[IndexSpec]] = [
         ("transactionId", {"unique": True}),
-        ([("accountId", 1), ("tradeDate", -1)], {}),
+        ([("accountId", 1), ("tradeDate", -1), ("_id", 1)], {}),
         ("status", {}),
         ("settlementDate", {}),
         ("securityId", {}),

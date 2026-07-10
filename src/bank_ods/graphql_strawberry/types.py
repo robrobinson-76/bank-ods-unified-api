@@ -183,40 +183,46 @@ class CashBalanceType:
 
 # ── List wrappers ─────────────────────────────────────────────────────────────
 
+@strawberry.type(name="PageInfo")
+class PageInfo:
+    hasMore: bool
+    nextCursor: typing.Optional[str]
+
+
 @strawberry.type(name="AccountList")
 class AccountList:
-    count: int
     data: typing.List[AccountType]
+    pageInfo: PageInfo
 
 
 @strawberry.type(name="SecurityList")
 class SecurityList:
-    count: int
     data: typing.List[SecurityType]
+    pageInfo: PageInfo
 
 
 @strawberry.type(name="TransactionList")
 class TransactionList:
-    count: int
     data: typing.List[TransactionType]
+    pageInfo: PageInfo
 
 
 @strawberry.type(name="PositionList")
 class PositionList:
-    count: int
     data: typing.List[PositionType]
+    pageInfo: PageInfo
 
 
 @strawberry.type(name="SettlementList")
 class SettlementList:
-    count: int
     data: typing.List[SettlementType]
+    pageInfo: PageInfo
 
 
 @strawberry.type(name="CashBalanceList")
 class CashBalanceList:
-    count: int
     data: typing.List[CashBalanceType]
+    pageInfo: PageInfo
 
 
 # ── Ad-hoc response types (no backing Pydantic model) ─────────────────────────
@@ -231,7 +237,6 @@ class TransactionSummaryItem:
 
 @strawberry.type(name="TransactionSummaryList")
 class TransactionSummaryList:
-    count: int
     data: typing.List[TransactionSummaryItem]
 
 

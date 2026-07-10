@@ -8,7 +8,7 @@ The MCP server is one of three transports sharing a single service layer. All to
 
 Two contract conventions apply everywhere:
 
-- **`count` is the total.** List results return `{"count": <total matching>, "data": [<one page>]}`. More records exist while `skip + len(data) < count`.
+- **Cursor pagination, no totals.** List results return `{"data": [<one page>], "page_info": {"has_more": bool, "next_cursor": str|null}}`. There is no total count. If `has_more` is true, call the same tool again passing `next_cursor` back VERBATIM as `cursor` — it is an opaque token, never build or edit one.
 - **Monetary values are exact strings.** Amounts, quantities, and rates are stored as Decimal128 and serialized as strings (e.g. `"18550.00"`), never floats. Timestamps are ISO 8601 with an explicit UTC offset (`2026-05-31T16:00:00+00:00`).
 
 ---
@@ -60,10 +60,10 @@ List accounts with optional filters. Every account embeds its client-master snap
 - `status: str` *(optional)* — `"ACTIVE"`, `"SUSPENDED"`, or `"CLOSED"`
 - `lei: str` *(optional)* — 20-char ISO 17442 Legal Entity Identifier (`client.lei`)
 - `domicile: str` *(optional)* — client's ISO 3166-1 alpha-2 country of domicile, e.g. `"CA"`
-- `limit: int` *(optional, default 20, max 200)*
-- `skip: int` *(optional, default 0)*
+- `limit: int` *(optional, default 50, max 200)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}`
+**Returns:** `{"data": [...], "page_info": {...}}` sorted by accountId
 
 ---
 
@@ -101,9 +101,9 @@ List securities with optional filters. Use this to resolve a `securityId` seen o
 - `status: str` *(optional)* — `"ACTIVE"`, `"MATURED"`, `"DELISTED"`
 - `sedol: str` *(optional)* — matches any listing's SEDOL
 - `limit: int` *(optional, default 50, max 200)*
-- `skip: int` *(optional, default 0)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}` sorted by securityId
+**Returns:** `{"data": [...], "page_info": {...}}` sorted by securityId
 
 ---
 
@@ -129,9 +129,9 @@ Query transactions for an account over a date range.
 - `status: str` *(optional)* — `"PENDING"`, `"MATCHED"`, `"SETTLED"`, `"FAILED"`, `"CANCELLED"`
 - `transaction_type: str` *(optional)* — `"BUY"`, `"SELL"`, `"DEPOSIT"`, `"WITHDRAWAL"`, `"TRANSFER_IN"`, `"TRANSFER_OUT"`, `"DIVIDEND"`, `"FX"`
 - `limit: int` *(optional, default 50, max 200)*
-- `skip: int` *(optional, default 0)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}` sorted by tradeDate descending
+**Returns:** `{"data": [...], "page_info": {...}}` sorted by tradeDate descending
 
 ---
 
@@ -144,7 +144,7 @@ Aggregate transaction counts and net amounts grouped by type and status. Use thi
 - `from_date: str`
 - `to_date: str`
 
-**Returns:** `{"count": N, "data": [{transactionType, status, count, totalNetAmount}]}`
+**Returns:** `{"data": [{transactionType, status, count, totalNetAmount}]}` — not paginated; data holds every group
 
 ---
 
@@ -168,8 +168,10 @@ Fetch all security holdings for an account on a given date.
 **Parameters:**
 - `account_id: str`
 - `as_of_date: str` — `"YYYY-MM-DD"`
+- `limit: int` *(optional, default 50, max 200)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}`
+**Returns:** `{"data": [...], "page_info": {...}}` sorted by securityId
 
 ---
 
@@ -182,8 +184,10 @@ Return EOD position snapshots for one security over a date range.
 - `security_id: str`
 - `from_date: str`
 - `to_date: str`
+- `limit: int` *(optional, default 50, max 200)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}` sorted ascending by `asOfDate`
+**Returns:** `{"data": [...], "page_info": {...}}` sorted ascending by `asOfDate`
 
 ---
 
@@ -215,6 +219,10 @@ Query settlements for an account on a specific settlement date.
 - `account_id: str`
 - `settlement_date: str` — `"YYYY-MM-DD"`
 - `status: str` *(optional)* — `"PENDING"`, `"INSTRUCTED"`, `"MATCHED"`, `"SETTLED"`, `"FAILED"`, `"CANCELLED"`, `"RECYCLED"`
+- `limit: int` *(optional, default 50, max 200)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
+
+**Returns:** `{"data": [...], "page_info": {...}}` sorted by settlementId
 
 ---
 
@@ -226,8 +234,10 @@ Find all failed settlements within a date window. Use for operational monitoring
 - `from_date: str`
 - `to_date: str`
 - `account_id: str` *(optional)* — scope to one account
+- `limit: int` *(optional, default 50, max 200)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}` sorted by settlementDate descending
+**Returns:** `{"data": [...], "page_info": {...}}` sorted by settlementDate descending
 
 ---
 
@@ -251,8 +261,10 @@ Fetch all currency balances for an account on a given date.
 **Parameters:**
 - `account_id: str`
 - `as_of_date: str`
+- `limit: int` *(optional, default 50, max 200)*
+- `cursor: str` *(optional)* — `next_cursor` from the previous page
 
-**Returns:** `{"count": N, "data": [...]}` — one entry per currency
+**Returns:** `{"data": [...], "page_info": {...}}` — one entry per currency, sorted by currency
 
 ---
 
@@ -331,13 +343,15 @@ All tools return errors as plain dicts, never as exceptions.
 ```python
 result = get_account(account_id="ACC-0001")
 if "error" in result:
-    # result["code"] is "NOT_FOUND", "INVALID_DATE", or "MONGO_ERROR"
+    # result["code"] is "NOT_FOUND", "INVALID_DATE", "INVALID_CURSOR", or "MONGO_ERROR"
     # result["error"] has a description
 else:
     account_name = result["accountName"]
 ```
 
-An empty list result is not an error: `{"count": 0, "data": []}` means no records matched.
+`INVALID_CURSOR` means the `cursor` value was malformed or came from a different tool/query — restart from the first page (no `cursor`) instead of retrying it.
+
+An empty list result is not an error: `{"data": [], "page_info": {"has_more": false, "next_cursor": null}}` means no records matched.
 
 ---
 
@@ -402,28 +416,24 @@ An empty list result is not an error: `{"count": 0, "data": []}` means no record
 
 ## Pagination
 
-All list tools support `skip: int = 0` for offset-based pagination:
+All 8 list tools use keyset cursor pagination with a uniform `limit: int = 50` (max 200) and `cursor: str | None`:
 
 ```
 # Page 1
-get_transactions(account_id, from_date, to_date, limit=50, skip=0)
+page = get_transactions(account_id, from_date, to_date, limit=50)
 
-# Page 2
-get_transactions(account_id, from_date, to_date, limit=50, skip=50)
+# Next pages — pass next_cursor back verbatim until has_more is false
+while page["page_info"]["has_more"]:
+    page = get_transactions(account_id, from_date, to_date, limit=50,
+                            cursor=page["page_info"]["next_cursor"])
 ```
 
-`count` is always the total number of matching records. More pages exist while `skip + len(data) < count`.
+Rules:
 
-| Tool | Default Limit | Max | Supports skip |
-|---|---|---|---|
-| list_accounts | 20 | 200 | yes |
-| list_securities | 50 | 200 | yes |
-| get_transactions | 50 | 200 | yes |
-| get_positions | 200 | 200 | yes |
-| get_position_history | 200 | 200 | yes |
-| get_settlements | 200 | 200 | yes |
-| get_settlement_fails | 200 | 200 | yes |
-| get_cash_balances | 50 | 50 | yes |
+- The cursor is an **opaque token**. Pass it back exactly as returned; never construct, decode, or modify one. A cursor only works with the same tool it came from.
+- **There is no total count.** To count records, page until `has_more` is false and sum `len(data)` — or prefer an aggregate tool (`get_transaction_summary`) when one exists.
+- Filters may change between pages (the cursor only marks a position in the sort order), but keep them identical for a coherent listing.
+- Results are deterministic: each tool has a fixed sort order (documented per tool above) with a unique tie-breaker, so pages never overlap or drop records — even if data changes mid-iteration.
 
 ---
 

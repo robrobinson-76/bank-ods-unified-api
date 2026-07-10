@@ -46,13 +46,27 @@ async def test_mcp_parity_get_account(first_account):
     assert result == service
 
 
-async def test_mcp_parity_transactions_skip(first_account):
+async def test_mcp_parity_transactions_cursor(first_account):
+    """The MCP tool returns the identical page and cursor as the service, and
+    following the service's cursor through MCP yields the service's page 2."""
     account_id = first_account["accountId"]
-    args = dict(account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=20, skip=1)
-    service = await svc_transactions.get_transactions(**args)
+    base = dict(account_id=account_id, from_date="2020-01-01", to_date="2030-01-01", limit=1)
+    page1 = await svc_transactions.get_transactions(**base)
     async with Client(mcp) as client:
-        result = _payload(await client.call_tool("get_transactions", args))
-    assert result == service
+        result1 = _payload(await client.call_tool("get_transactions", base))
+        assert result1 == page1
+        if page1["page_info"]["has_more"]:
+            args2 = {**base, "cursor": page1["page_info"]["next_cursor"]}
+            page2 = await svc_transactions.get_transactions(**args2)
+            result2 = _payload(await client.call_tool("get_transactions", args2))
+            assert result2 == page2
+            assert result2["data"] != result1["data"]
+
+
+async def test_mcp_invalid_cursor_envelope():
+    async with Client(mcp) as client:
+        result = _payload(await client.call_tool("list_accounts", {"cursor": "garbage"}))
+    assert result.get("code") == "INVALID_CURSOR"
 
 
 async def test_mcp_parity_list_securities():
@@ -60,7 +74,7 @@ async def test_mcp_parity_list_securities():
     async with Client(mcp) as client:
         result = _payload(await client.call_tool("list_securities", {"asset_class": "GOVT_BOND"}))
     assert result == service
-    assert result["count"] > 0
+    assert result["data"]
 
 
 async def test_mcp_parity_get_security_by_sedol(dual_listed_security):

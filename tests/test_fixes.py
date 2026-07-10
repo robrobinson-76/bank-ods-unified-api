@@ -20,9 +20,9 @@ async def test_settlements_match_whole_day(db):
     must return them. Regression: exact-midnight equality returned 0 forever."""
     s = await db.settlements.find_one({}, {"_id": 0, "accountId": 1, "settlementDate": 1, "settlementId": 1})
     day = s["settlementDate"].strftime("%Y-%m-%d")
-    result = await svc_settlements.get_settlements(s["accountId"], day)
+    result = await svc_settlements.get_settlements(s["accountId"], day, limit=200)
     assert "error" not in result
-    assert result["count"] > 0
+    assert result["data"]
     assert any(d["settlementId"] == s["settlementId"] for d in result["data"])
 
 
@@ -34,7 +34,7 @@ async def test_transactions_range_includes_end_date(db):
     day = t["tradeDate"].strftime("%Y-%m-%d")
     result = await svc_transactions.get_transactions(t["accountId"], day, day, limit=200)
     assert "error" not in result
-    assert result["count"] > 0
+    assert result["data"]
     assert any(d["transactionId"] == t["transactionId"] for d in result["data"])
 
 
@@ -56,20 +56,21 @@ async def test_invalid_date_envelope_and_rest_400(rest_client, first_account):
 @pytest.mark.asyncio
 async def test_securities_parity_all_layers(rest_client, gql_client, sb_client, gr_client):
     service = await svc_securities.list_securities(asset_class="GOVT_BOND", limit=5)
-    assert service["count"] > 0
+    assert service["data"]
 
     rest = (await rest_client.get("/securities", params={"asset_class": "GOVT_BOND", "limit": 5})).json()
 
     q = ('{ list_securities(assetClass: "GOVT_BOND", limit: 5) '
-         '{ count data { securityId description couponRate maturityDate status } } }')
+         '{ data { securityId description couponRate maturityDate status } pageInfo { hasMore nextCursor } } }')
     ariadne = (await gql_query(gql_client, q))["data"]["list_securities"]
     sb = (await gql_query(sb_client, q))["data"]["list_securities"]
     gr = (await gql_query(gr_client, q))["data"]["list_securities"]
 
-    assert service["count"] == rest["count"] == ariadne["count"] == sb["count"] == gr["count"]
     assert sb == ariadne == gr
     svc_ids = [d["securityId"] for d in service["data"]]
+    assert svc_ids == [d["securityId"] for d in rest["data"]]
     assert svc_ids == [d["securityId"] for d in ariadne["data"]]
+    assert service["page_info"]["next_cursor"] == ariadne["pageInfo"]["nextCursor"]
 
 
 @pytest.mark.asyncio
@@ -123,12 +124,12 @@ async def test_account_embeds_client_master(rest_client, first_account):
 async def test_list_accounts_lei_and_domicile_filters(rest_client, first_account):
     lei = first_account["client"]["lei"]
     r = (await rest_client.get("/accounts", params={"lei": lei})).json()
-    assert r["count"] >= 1
+    assert len(r["data"]) >= 1
     assert all(a["client"]["lei"] == lei for a in r["data"])
 
     dom = first_account["client"]["countryOfDomicile"]
     r2 = (await rest_client.get("/accounts", params={"domicile": dom})).json()
-    assert r2["count"] >= 1
+    assert len(r2["data"]) >= 1
     assert all(a["client"]["countryOfDomicile"] == dom for a in r2["data"])
 
 
@@ -176,4 +177,4 @@ def test_client_survives_multiple_event_loops():
     r2 = asyncio.run(svc_accounts.list_accounts(limit=1))
     assert "error" not in r1
     assert "error" not in r2
-    assert r1["count"] == r2["count"]
+    assert r1["data"] == r2["data"]

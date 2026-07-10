@@ -26,6 +26,8 @@ async def get_transactions(
     status: Optional[str] = None,
     transaction_type: Optional[str] = None,
     limit: int = 50,
-    skip: int = 0,
+    cursor: Optional[str] = None,
 ):
-    return check(await svc.get_transactions(account_id, from_date, to_date, status, transaction_type, limit, skip))
+    return check(
+        await svc.get_transactions(account_id, from_date, to_date, status, transaction_type, limit, cursor)
+    )

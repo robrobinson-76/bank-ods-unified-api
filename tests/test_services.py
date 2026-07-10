@@ -31,8 +31,9 @@ async def test_get_account_not_found():
 async def test_list_accounts(first_account):
     result = await svc_accounts.list_accounts(limit=5)
     assert "error" not in result
-    assert result["count"] > 0
     assert isinstance(result["data"], list)
+    assert result["data"]
+    assert set(result["page_info"]) == {"has_more", "next_cursor"}
 
 
 async def test_list_accounts_by_status():
@@ -42,23 +43,29 @@ async def test_list_accounts_by_status():
         assert acct["status"] == "ACTIVE"
 
 
-async def test_list_accounts_skip():
-    """count is the total (unchanged by skip); the data page is offset by 1."""
-    full = await svc_accounts.list_accounts(limit=50, skip=0)
-    skipped = await svc_accounts.list_accounts(limit=50, skip=1)
+async def test_list_accounts_cursor():
+    """Following next_cursor resumes exactly where the previous page ended."""
+    full = await svc_accounts.list_accounts(limit=50)
+    page1 = await svc_accounts.list_accounts(limit=1)
     assert "error" not in full
-    assert "error" not in skipped
-    if full["count"] > 1:
-        assert skipped["count"] == full["count"]
-        assert len(skipped["data"]) == len(full["data"]) - 1
-        assert skipped["data"][0]["accountId"] == full["data"][1]["accountId"]
+    assert "error" not in page1
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        cursor = page1["page_info"]["next_cursor"]
+        page2 = await svc_accounts.list_accounts(limit=1, cursor=cursor)
+        assert page2["data"][0]["accountId"] == full["data"][1]["accountId"]
+
+
+async def test_list_accounts_invalid_cursor():
+    result = await svc_accounts.list_accounts(cursor="not-a-cursor")
+    assert result.get("code") == "INVALID_CURSOR"
 
 
 async def test_list_accounts_by_lei(first_account):
     lei = first_account["client"]["lei"]
     result = await svc_accounts.list_accounts(lei=lei)
     assert "error" not in result
-    assert result["count"] > 0
+    assert result["data"]
     for acct in result["data"]:
         assert acct["client"]["lei"] == lei
 
@@ -67,7 +74,7 @@ async def test_list_accounts_by_domicile(first_account):
     domicile = first_account["client"]["countryOfDomicile"]
     result = await svc_accounts.list_accounts(domicile=domicile)
     assert "error" not in result
-    assert result["count"] > 0
+    assert result["data"]
     for acct in result["data"]:
         assert acct["client"]["countryOfDomicile"] == domicile
 
@@ -102,7 +109,8 @@ async def test_list_securities_sedol_filter(dual_listed_security):
     sedol = dual_listed_security["listings"][0]["sedol"]
     result = await svc_securities.list_securities(sedol=sedol)
     assert "error" not in result
-    assert result["count"] == 1
+    assert len(result["data"]) == 1
+    assert result["page_info"]["has_more"] is False
     assert result["data"][0]["securityId"] == dual_listed_security["securityId"]
 
 
@@ -128,25 +136,26 @@ async def test_get_transactions(first_account):
     )
     assert "error" not in result
     assert isinstance(result["data"], list)
-    assert "count" in result
+    assert "page_info" in result
 
 
-async def test_get_transactions_skip(first_account):
-    """skip=1 offsets results; item[0] of skipped page == item[1] of full page."""
+async def test_get_transactions_cursor(first_account):
+    """Following next_cursor resumes exactly where the previous page ended."""
     base = dict(
         account_id=first_account["accountId"],
         from_date="2020-01-01",
         to_date="2030-01-01",
-        limit=200,  # max — so we see all docs and the skip difference is visible
     )
-    full = await svc_transactions.get_transactions(**base, skip=0)
-    skipped = await svc_transactions.get_transactions(**base, skip=1)
+    full = await svc_transactions.get_transactions(**base, limit=200)
+    page1 = await svc_transactions.get_transactions(**base, limit=1)
     assert "error" not in full
-    assert "error" not in skipped
-    if full["count"] > 1:
-        # count is the total number of matching documents — skip never changes it
-        assert skipped["count"] == full["count"]
-        assert skipped["data"][0]["transactionId"] == full["data"][1]["transactionId"]
+    assert "error" not in page1
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        page2 = await svc_transactions.get_transactions(
+            **base, limit=1, cursor=page1["page_info"]["next_cursor"]
+        )
+        assert page2["data"][0]["transactionId"] == full["data"][1]["transactionId"]
 
 
 async def test_get_transaction_summary(first_account):
@@ -156,7 +165,7 @@ async def test_get_transaction_summary(first_account):
         to_date="2030-01-01",
     )
     assert "error" not in result
-    assert "count" in result
+    assert "page_info" not in result  # not paginated — data holds every group
     assert isinstance(result["data"], list)
 
 
@@ -169,22 +178,26 @@ async def test_get_positions(db, first_account):
     as_of = pos_doc["asOfDate"].strftime("%Y-%m-%d")
     result = await svc_positions.get_positions(first_account["accountId"], as_of)
     assert "error" not in result
-    assert result["count"] > 0
+    assert result["data"]
 
 
-async def test_get_positions_skip(db, first_account):
-    """count is the total (unchanged by skip); the data page shrinks by 1."""
+async def test_get_positions_cursor(db, first_account):
+    """Following next_cursor resumes exactly where the previous page ended."""
     pos_doc = await db.positions.find_one({"accountId": first_account["accountId"]}, {"_id": 0})
     if pos_doc is None:
         pytest.skip("No positions for this account")
     as_of = pos_doc["asOfDate"].strftime("%Y-%m-%d")
-    full = await svc_positions.get_positions(first_account["accountId"], as_of, skip=0)
-    skipped = await svc_positions.get_positions(first_account["accountId"], as_of, skip=1)
+    full = await svc_positions.get_positions(first_account["accountId"], as_of, limit=200)
+    page1 = await svc_positions.get_positions(first_account["accountId"], as_of, limit=1)
     assert "error" not in full
-    assert "error" not in skipped
-    if full["count"] > 1:
-        assert skipped["count"] == full["count"]
-        assert len(skipped["data"]) == len(full["data"]) - 1
+    assert "error" not in page1
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        page2 = await svc_positions.get_positions(
+            first_account["accountId"], as_of, limit=1,
+            cursor=page1["page_info"]["next_cursor"],
+        )
+        assert page2["data"][0]["securityId"] == full["data"][1]["securityId"]
 
 
 # ── Settlements ───────────────────────────────────────────────────────────────
@@ -195,18 +208,22 @@ async def test_get_settlement_fails():
     )
     assert "error" not in result
     assert isinstance(result["data"], list)
-    assert result["count"] >= 0
+    assert "page_info" in result
 
 
-async def test_get_settlement_fails_skip():
-    """count is the total (unchanged by skip); the data page is offset by 1."""
-    full = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01", skip=0)
-    skipped = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01", skip=1)
+async def test_get_settlement_fails_cursor():
+    """Following next_cursor resumes exactly where the previous page ended."""
+    full = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01", limit=200)
+    page1 = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01", limit=1)
     assert "error" not in full
-    assert "error" not in skipped
-    if full["count"] > 1:
-        assert skipped["count"] == full["count"]
-        assert skipped["data"][0]["settlementId"] == full["data"][1]["settlementId"]
+    assert "error" not in page1
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        page2 = await svc_settlements.get_settlement_fails(
+            "2020-01-01", "2030-01-01", limit=1,
+            cursor=page1["page_info"]["next_cursor"],
+        )
+        assert page2["data"][0]["settlementId"] == full["data"][1]["settlementId"]
 
 
 async def test_get_settlement_status(db, first_settled_txn):
@@ -236,19 +253,23 @@ async def test_get_cash_balances(first_balance):
         as_of_date=first_balance["asOfDate"].strftime("%Y-%m-%d"),
     )
     assert "error" not in result
-    assert result["count"] > 0
+    assert result["data"]
 
 
-async def test_get_cash_balances_skip(first_balance):
-    """count is the total (unchanged by skip); the data page shrinks by 1."""
+async def test_get_cash_balances_cursor(first_balance):
+    """Following next_cursor resumes exactly where the previous page ended."""
     as_of = first_balance["asOfDate"].strftime("%Y-%m-%d")
-    full = await svc_balances.get_cash_balances(first_balance["accountId"], as_of, skip=0)
-    skipped = await svc_balances.get_cash_balances(first_balance["accountId"], as_of, skip=1)
+    full = await svc_balances.get_cash_balances(first_balance["accountId"], as_of, limit=200)
+    page1 = await svc_balances.get_cash_balances(first_balance["accountId"], as_of, limit=1)
     assert "error" not in full
-    assert "error" not in skipped
-    if full["count"] > 1:
-        assert skipped["count"] == full["count"]
-        assert len(skipped["data"]) == len(full["data"]) - 1
+    assert "error" not in page1
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        page2 = await svc_balances.get_cash_balances(
+            first_balance["accountId"], as_of, limit=1,
+            cursor=page1["page_info"]["next_cursor"],
+        )
+        assert page2["data"][0]["currency"] == full["data"][1]["currency"]
 
 
 async def test_get_projected_balance(first_balance):

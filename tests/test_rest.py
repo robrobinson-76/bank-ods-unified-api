@@ -31,22 +31,31 @@ async def test_rest_list_accounts(rest_client):
     resp = await rest_client.get("/accounts", params={"limit": 5})
     assert resp.status_code == 200
     data = resp.json()
-    assert "count" in data
+    assert "page_info" in data
     assert isinstance(data["data"], list)
     assert len(data["data"]) <= 5
 
 
-async def test_rest_list_accounts_skip(rest_client):
-    """count is the total (unchanged by skip); the data page is offset by 1."""
-    all_resp = await rest_client.get("/accounts", params={"limit": 50, "skip": 0})
-    skip_resp = await rest_client.get("/accounts", params={"limit": 50, "skip": 1})
-    assert all_resp.status_code == 200
-    assert skip_resp.status_code == 200
-    total = all_resp.json()["count"]
-    if total > 1:
-        assert skip_resp.json()["count"] == total
-        # First item of skipped page should match second item of full page
-        assert skip_resp.json()["data"][0]["accountId"] == all_resp.json()["data"][1]["accountId"]
+async def test_rest_list_accounts_cursor(rest_client):
+    """Following next_cursor resumes exactly where the previous page ended."""
+    full_resp = await rest_client.get("/accounts", params={"limit": 50})
+    page1_resp = await rest_client.get("/accounts", params={"limit": 1})
+    assert full_resp.status_code == 200
+    assert page1_resp.status_code == 200
+    full = full_resp.json()
+    page1 = page1_resp.json()
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        page2_resp = await rest_client.get(
+            "/accounts", params={"limit": 1, "cursor": page1["page_info"]["next_cursor"]}
+        )
+        assert page2_resp.status_code == 200
+        assert page2_resp.json()["data"][0]["accountId"] == full["data"][1]["accountId"]
+
+
+async def test_rest_invalid_cursor_400(rest_client):
+    resp = await rest_client.get("/accounts", params={"cursor": "garbage"})
+    assert resp.status_code == 400
 
 
 # ── Transactions ───────────────────────────────────────────────────────────────
@@ -68,29 +77,26 @@ async def test_rest_get_transactions(rest_client, first_account):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "count" in data
+    assert "page_info" in data
     assert len(data["data"]) <= 5
 
 
-async def test_rest_get_transactions_skip(rest_client, first_account):
-    """skip=1 offsets results; item[0] of skipped page == item[1] of full page."""
+async def test_rest_get_transactions_cursor(rest_client, first_account):
+    """Following next_cursor resumes exactly where the previous page ended."""
     base = dict(
         account_id=first_account["accountId"],
         from_date="2020-01-01",
         to_date="2030-01-01",
-        limit=200,  # max — ensures skip difference is visible
     )
-    all_resp = await rest_client.get("/transactions", params={**base, "skip": 0})
-    skip_resp = await rest_client.get("/transactions", params={**base, "skip": 1})
-    assert all_resp.status_code == 200
-    assert skip_resp.status_code == 200
-    total = all_resp.json()["count"]
-    if total > 1:
-        assert skip_resp.json()["count"] == total
-        assert (
-            skip_resp.json()["data"][0]["transactionId"]
-            == all_resp.json()["data"][1]["transactionId"]
-        )
+    full = (await rest_client.get("/transactions", params={**base, "limit": 200})).json()
+    page1 = (await rest_client.get("/transactions", params={**base, "limit": 1})).json()
+    if len(full["data"]) > 1:
+        assert page1["page_info"]["has_more"] is True
+        page2 = (await rest_client.get(
+            "/transactions",
+            params={**base, "limit": 1, "cursor": page1["page_info"]["next_cursor"]},
+        )).json()
+        assert page2["data"][0]["transactionId"] == full["data"][1]["transactionId"]
 
 
 async def test_rest_transaction_summary(rest_client, first_account):
@@ -103,7 +109,9 @@ async def test_rest_transaction_summary(rest_client, first_account):
         },
     )
     assert resp.status_code == 200
-    assert "count" in resp.json()
+    body = resp.json()
+    assert isinstance(body["data"], list)
+    assert "page_info" not in body  # summary is not paginated
 
 
 # ── Settlements ───────────────────────────────────────────────────────────────
@@ -119,7 +127,7 @@ async def test_rest_settlement_fails(rest_client):
         params={"from_date": "2020-01-01", "to_date": "2030-01-01"},
     )
     assert resp.status_code == 200
-    assert "count" in resp.json()
+    assert "page_info" in resp.json()
 
 
 # ── Balances ──────────────────────────────────────────────────────────────────
@@ -131,7 +139,7 @@ async def test_rest_cash_balances(rest_client, first_balance):
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert "count" in data
+    assert "page_info" in data
 
 
 async def test_rest_projected_balance(rest_client, first_balance):
