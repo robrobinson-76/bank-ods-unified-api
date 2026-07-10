@@ -18,7 +18,7 @@ async def test_gql_health(gql_client):
 async def test_gql_list_accounts(gql_client):
     result = await gql_query(
         gql_client,
-        "{ list_accounts(limit: 3) { count data { accountId clientName status } } }",
+        "{ list_accounts(limit: 3) { count data { accountId client { clientName } status } } }",
     )
     assert "errors" not in result
     payload = result["data"]["list_accounts"]
@@ -44,7 +44,7 @@ async def test_gql_list_accounts_skip(gql_client):
 async def test_gql_get_account(gql_client, first_account):
     result = await gql_query(
         gql_client,
-        f'{{ get_account(accountId: "{first_account["accountId"]}") {{ accountId clientName }} }}',
+        f'{{ get_account(accountId: "{first_account["accountId"]}") {{ accountId client {{ clientName }} }} }}',
     )
     assert "errors" not in result
     acct = result["data"]["get_account"]

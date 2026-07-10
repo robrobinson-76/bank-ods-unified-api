@@ -8,19 +8,44 @@ import pymongo
 from .base import BankDocument, IndexSpec
 
 
+class ClientMaster(BankDocument):
+    """Denormalized client-master snapshot embedded on each account.
+
+    The standard external linkage key is the LEI (ISO 17442); clientId is the
+    internal key. All accounts of a client carry an identical snapshot.
+    """
+
+    COLLECTION: ClassVar[str] = ""  # embedded document — not a collection
+    INDEXES: ClassVar[list[IndexSpec]] = []
+
+    clientId: str
+    clientName: str
+    lei: str  # 20-char ISO 17442 Legal Entity Identifier
+    countryOfDomicile: str  # ISO 3166-1 alpha-2
+    countryOfIncorporation: str  # ISO 3166-1 alpha-2
+    taxResidencies: list[str]  # FATCA/CRS jurisdictions, ISO 3166-1 alpha-2
+    classification: Literal["RETAIL", "PROFESSIONAL", "ELIGIBLE_COUNTERPARTY"]
+    kycStatus: Literal["APPROVED", "PENDING_REVIEW", "EXPIRED"]
+    riskRating: Literal["LOW", "MEDIUM", "HIGH"]
+    legalEntityType: Literal[
+        "CORPORATION", "PARTNERSHIP", "FUND", "TRUST", "GOVERNMENT", "INDIVIDUAL"
+    ]
+    parentClientId: Optional[str] = None
+
+
 class Account(BankDocument):
     COLLECTION: ClassVar[str] = "accounts"
     INDEXES: ClassVar[list[IndexSpec]] = [
         ("accountId", {"unique": True}),
-        ("clientId", {}),
+        ("client.clientId", {}),
+        ("client.lei", {}),
         ("status", {}),
     ]
 
     accountId: str
     accountName: str
     accountType: Literal["CUSTODY", "PROPRIETARY", "OMNIBUS"]
-    clientId: str
-    clientName: str
+    client: ClientMaster
     baseCurrency: str
     status: Literal["ACTIVE", "SUSPENDED", "CLOSED"]
     openDate: datetime

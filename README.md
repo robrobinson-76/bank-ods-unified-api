@@ -21,7 +21,7 @@ The domain is a simplified custodian bank ODS (accounts, positions, transactions
       ┌────────────▼────────────┐
       │     Service Layer       │
       │  bank_ods.services.*   │
-      │  17 async functions     │
+      │  18 async functions     │
       │  One MongoDB access     │
       │  point for all layers   │
       └────────────┬────────────┘
@@ -90,7 +90,7 @@ Copy `.env.example` to `.env` before running.
 src/bank_ods/
 ├── models/          Pydantic v2 entity models + ENTITIES registry
 ├── db/              Motor client + ensure_indexes()
-├── services/        17 async functions — all MongoDB access lives here
+├── services/        18 async functions — all MongoDB access lives here
 ├── mcp/             @mcp.tool() wrappers → services (fastmcp)
 ├── rest/            FastAPI routers → services
 ├── graphql/         Ariadne resolvers → services; SDL generated from models
@@ -119,7 +119,7 @@ Six MongoDB collections covering a read-only custodian bank ODS view:
 
 ### MCP
 
-Exposes 17 read-only tools to any MCP-capable client (Claude Desktop, VS Code, etc.).
+Exposes 18 read-only tools to any MCP-capable client (Claude Desktop, VS Code, etc.).
 
 Register in `claude_desktop_config.json`:
 

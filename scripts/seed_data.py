@@ -3,6 +3,7 @@ import os
 import random
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from typing import Any
 
 from bson.decimal128 import Decimal128
 from dotenv import load_dotenv
@@ -26,6 +27,84 @@ def date_offset(days: int) -> datetime:
 
 def eod(dt: datetime) -> datetime:
     return dt.replace(hour=16, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Reference-data identifier generators (format-valid fakes)
+# ---------------------------------------------------------------------------
+
+_SEDOL_WEIGHTS = (1, 3, 1, 7, 3, 9)
+_SEDOL_CHARS = "0123456789BCDFGHJKLMNPQRSTVWXYZ"  # SEDOLs exclude vowels
+_used_sedols: set[str] = set()
+
+
+def make_sedol() -> str:
+    """7-char LSEG SEDOL: 6 alphanumeric (no vowels) + weighted mod-10 check digit.
+
+    The multikey unique index only enforces uniqueness across documents, so the
+    generator guarantees global uniqueness itself via _used_sedols.
+    """
+    while True:
+        body = "B" + "".join(rng.choice(_SEDOL_CHARS) for _ in range(5))
+        check = (10 - sum(w * int(c, 36) for w, c in zip(_SEDOL_WEIGHTS, body)) % 10) % 10
+        sedol = f"{body}{check}"
+        if sedol not in _used_sedols:
+            _used_sedols.add(sedol)
+            return sedol
+
+
+_LEI_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def make_lei() -> str:
+    """20-char ISO 17442 LEI: LOU-prefixed 18-char base + ISO 7064 MOD 97-10 check pair."""
+    base = "549300" + "".join(rng.choice(_LEI_CHARS) for _ in range(12))
+    n = int("".join(str(int(ch, 36)) for ch in base + "00"))
+    return base + f"{98 - n % 97:02d}"
+
+
+def make_figi() -> str:
+    """12-char fake OpenFIGI share-class FIGI."""
+    return "BBG00" + "".join(rng.choice(_SEDOL_CHARS) for _ in range(7))
+
+
+# exchange -> (operating MIC, segment MIC, country of listing, settlement CSD BIC)
+# MICs per ISO 10383; settlement location is the market's CSD (DTC / CDS / CREST).
+EXCHANGE_MICS = {
+    "NASDAQ": ("XNAS", "XNGS", "US", "DTCYUS33"),
+    "NYSE": ("XNYS", "XNYS", "US", "DTCYUS33"),
+    "TSX": ("XTSE", "XTSE", "CA", "CDSLCATT"),
+    "LSE": ("XLON", "XLON", "GB", "CRSTGB22"),
+}
+
+
+def make_listing(exchange: str, currency: str, local_code: str | None = None,
+                 primary: bool = True) -> dict:
+    op_mic, mic, country, csd = EXCHANGE_MICS[exchange]
+    return {
+        "sedol": make_sedol(),
+        "micCode": mic,
+        "operatingMic": op_mic,
+        "exchangeName": exchange,
+        "tradedCurrency": currency,
+        "countryOfListing": country,
+        "settlementLocation": csd,
+        "localCode": local_code,
+        "primaryListing": primary,
+        "status": "ACTIVE",
+    }
+
+
+# Genuinely dual-listed equities: ticker -> secondary listings (exchange, currency, localCode).
+DUAL_LISTINGS = {
+    "RY.TO": [("NYSE", "USD", "RY")],
+    "TD.TO": [("NYSE", "USD", "TD")],
+    "BNS.TO": [("NYSE", "USD", "BNS")],
+}
+
+# Funds with an extra traded-currency line on the same venue (one SEDOL per
+# traded currency since 2008): ISIN -> extra currency.
+FUND_EXTRA_CURRENCY = {"IE00B4L5Y983": "GBP"}
 
 
 # ---------------------------------------------------------------------------
@@ -94,14 +173,19 @@ FUND_SPECS = [
 
 def build_securities() -> list[dict]:
     now = datetime.now(tz=timezone.utc)
-    secs = []
+    secs: list[dict[str, Any]] = []
     for i, (ticker, isin, cusip, desc, country, exchange, issuer) in enumerate(EQUITY_SPECS, 1):
         currency = "CAD" if country == "CA" else "USD"
+        local_code = ticker.removesuffix(".TO")
+        listings = [make_listing(exchange, currency, local_code)]
+        for ex2, cur2, code2 in DUAL_LISTINGS.get(ticker, []):
+            listings.append(make_listing(ex2, cur2, code2, primary=False))
         secs.append({
             "securityId": f"SEC-{i:06d}",
             "isin": isin,
             "cusip": cusip,
             "ticker": ticker,
+            "figi": make_figi(),
             "description": desc,
             "assetClass": "EQUITY",
             "subType": "COMMON_STOCK",
@@ -112,46 +196,56 @@ def build_securities() -> list[dict]:
             "maturityDate": None,
             "couponRate": None,
             "status": "ACTIVE",
+            "listings": listings,
             "createdAt": now,
             "updatedAt": now,
         })
     base = len(EQUITY_SPECS)
-    for i, (isin, cusip, desc, country, currency, coupon, mat) in enumerate(BOND_SPECS, 1):
+    for i, (b_isin, b_cusip, b_desc, b_country, b_currency, coupon, mat) in enumerate(BOND_SPECS, 1):
         secs.append({
             "securityId": f"SEC-{base + i:06d}",
-            "isin": isin,
-            "cusip": cusip,
+            "isin": b_isin,
+            "cusip": b_cusip,
             "ticker": None,
-            "description": desc,
-            "assetClass": "GOVT_BOND" if "TREASURY" in desc or "CANADA" in desc else "CORP_BOND",
+            "figi": None,
+            "description": b_desc,
+            "assetClass": "GOVT_BOND" if "TREASURY" in b_desc or "CANADA" in b_desc else "CORP_BOND",
             "subType": "FIXED_RATE",
-            "currency": currency,
+            "currency": b_currency,
             "exchange": None,
-            "issuer": desc.split()[0],
-            "country": country,
+            "issuer": b_desc.split()[0],
+            "country": b_country,
             "maturityDate": datetime.fromisoformat(mat).replace(tzinfo=timezone.utc),
             "couponRate": coupon,
             "status": "ACTIVE",
+            "listings": [],
             "createdAt": now,
             "updatedAt": now,
         })
     base2 = base + len(BOND_SPECS)
-    for i, (isin, cusip, desc, country, currency) in enumerate(FUND_SPECS, 1):
+    for i, (f_isin, f_cusip, f_desc, f_country, f_currency) in enumerate(FUND_SPECS, 1):
+        fund_exchange = "TSX" if f_country == "CA" else "LSE"
+        listings = [make_listing(fund_exchange, f_currency)]
+        extra_currency = FUND_EXTRA_CURRENCY.get(f_isin)
+        if extra_currency:
+            listings.append(make_listing(fund_exchange, extra_currency, primary=False))
         secs.append({
             "securityId": f"SEC-{base2 + i:06d}",
-            "isin": isin,
-            "cusip": cusip,
+            "isin": f_isin,
+            "cusip": f_cusip,
             "ticker": None,
-            "description": desc,
+            "figi": make_figi(),
+            "description": f_desc,
             "assetClass": "FUND",
             "subType": "ETF",
-            "currency": currency,
-            "exchange": "TSX" if country == "CA" else "LSE",
-            "issuer": desc.split()[0],
-            "country": country,
+            "currency": f_currency,
+            "exchange": fund_exchange,
+            "issuer": f_desc.split()[0],
+            "country": f_country,
             "maturityDate": None,
             "couponRate": None,
             "status": "ACTIVE",
+            "listings": listings,
             "createdAt": now,
             "updatedAt": now,
         })
@@ -166,12 +260,46 @@ ACCOUNT_TYPES = ["CUSTODY", "CUSTODY", "CUSTODY", "PROPRIETARY", "OMNIBUS"]
 STATUSES = ["ACTIVE"] * 17 + ["SUSPENDED"] * 2 + ["CLOSED"] * 1
 BRANCHES = ["Toronto", "Toronto", "Toronto", "Montreal", "Vancouver", "New York", "London"]
 
+# One value per client (index-aligned with client_ids) — deterministic spread.
+CLIENT_DOMICILES = ["CA", "CA", "CA", "CA", "US", "US", "US", "GB", "GB", "IE"]
+CLIENT_CLASSIFICATIONS = ["PROFESSIONAL"] * 6 + ["ELIGIBLE_COUNTERPARTY"] * 3 + ["RETAIL"]
+CLIENT_ENTITY_TYPES = [
+    "CORPORATION", "CORPORATION", "FUND", "PARTNERSHIP", "CORPORATION",
+    "FUND", "TRUST", "CORPORATION", "GOVERNMENT", "INDIVIDUAL",
+]
+CLIENT_KYC = ["APPROVED"] * 8 + ["PENDING_REVIEW", "EXPIRED"]
+CLIENT_RISK = ["LOW"] * 5 + ["MEDIUM"] * 4 + ["HIGH"]
+
+
+def build_client_masters(client_ids: list[str], client_names: list[str]) -> dict[str, dict]:
+    """One client-master snapshot per client so every account of a client
+    embeds identical values (linkage key: LEI, ISO 17442)."""
+    masters = {}
+    for idx, cid in enumerate(client_ids):
+        domicile = CLIENT_DOMICILES[idx]
+        extra_tax = {"US"} if idx in (2, 7) else set()
+        masters[cid] = {
+            "clientId": cid,
+            "clientName": client_names[idx],
+            "lei": make_lei(),
+            "countryOfDomicile": domicile,
+            "countryOfIncorporation": domicile,
+            "taxResidencies": sorted({domicile} | extra_tax),
+            "classification": CLIENT_CLASSIFICATIONS[idx],
+            "kycStatus": CLIENT_KYC[idx],
+            "riskRating": CLIENT_RISK[idx],
+            "legalEntityType": CLIENT_ENTITY_TYPES[idx],
+            "parentClientId": client_ids[0] if idx in (1, 2) else None,
+        }
+    return masters
+
 
 def build_accounts() -> list[dict]:
     now = datetime.now(tz=timezone.utc)
     accounts = []
     client_ids = [f"CLT-{i:06d}" for i in range(1, 11)]
     client_names = [fake.company() for _ in client_ids]
+    client_masters = build_client_masters(client_ids, client_names)
     for i in range(20):
         clt_idx = i % 10
         acc_type = rng.choice(ACCOUNT_TYPES)
@@ -181,8 +309,7 @@ def build_accounts() -> list[dict]:
             "accountId": f"ACC-{i + 1:06d}",
             "accountName": f"{client_names[clt_idx]} - {acc_type.title()}",
             "accountType": acc_type,
-            "clientId": client_ids[clt_idx],
-            "clientName": client_names[clt_idx],
+            "client": dict(client_masters[client_ids[clt_idx]]),
             "baseCurrency": rng.choice(["CAD", "USD"]),
             "status": status,
             "openDate": open_date,
@@ -430,7 +557,7 @@ def convert_decimals(docs: list[dict], fields: set[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    client = pymongo.MongoClient(MONGODB_URI)
+    client: pymongo.MongoClient = pymongo.MongoClient(MONGODB_URI)
     db = client[MONGODB_DB]
 
     print("Building securities...")

@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
+      - name: Type check (mypy)
+        run: uv run mypy
+
       - name: Seed database
         run: uv run python scripts/seed_data.py
 

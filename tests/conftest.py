@@ -36,6 +36,21 @@ async def first_account(db):
 
 
 @pytest_asyncio.fixture(scope="session")
+async def first_security(db):
+    doc = await db.securities.find_one({}, {"_id": 0})
+    assert doc is not None, "No securities found — run scripts/seed_data.py first"
+    return doc
+
+
+@pytest_asyncio.fixture(scope="session")
+async def dual_listed_security(db):
+    """A security with at least two market-level listings (seeded: RY/TD/BNS)."""
+    doc = await db.securities.find_one({"listings.1": {"$exists": True}}, {"_id": 0})
+    assert doc is not None, "No dual-listed securities found — run scripts/seed_data.py first"
+    return doc
+
+
+@pytest_asyncio.fixture(scope="session")
 async def first_balance(db, first_account):
     doc = await db.cash_balances.find_one(
         {"accountId": first_account["accountId"]}, {"_id": 0}
@@ -88,8 +103,8 @@ async def gr_client():
         yield client
 
 
-async def gql_query(client: AsyncClient, query: str, variables: dict = None) -> dict:
-    payload = {"query": query}
+async def gql_query(client: AsyncClient, query: str, variables: dict | None = None) -> dict:
+    payload: dict = {"query": query}
     if variables:
         payload["variables"] = variables
     resp = await client.post("/graphql/", json=payload)

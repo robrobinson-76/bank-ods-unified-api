@@ -4,7 +4,7 @@
 
 This guide covers how AI agents (Claude Code or any MCP-capable client) should interact with the `bank-ods` MCP server: tool naming conventions, parameter formats, query patterns, error handling, and pagination.
 
-The MCP server is one of three transports sharing a single service layer. All tools delegate to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs. There are 17 read-only tools across six domains.
+The MCP server is one of three transports sharing a single service layer. All tools delegate to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs. There are 18 read-only tools across six domains.
 
 Two contract conventions apply everywhere:
 
@@ -53,11 +53,13 @@ Fetch a single account by its account ID.
 
 #### `list_accounts`
 
-List accounts with optional filters.
+List accounts with optional filters. Every account embeds its client-master snapshot under `client` (clientId, clientName, LEI, KYC status, risk rating, tax residencies).
 
 **Parameters:**
-- `client_id: str` *(optional)*
+- `client_id: str` *(optional)* — matches `client.clientId`
 - `status: str` *(optional)* — `"ACTIVE"`, `"SUSPENDED"`, or `"CLOSED"`
+- `lei: str` *(optional)* — 20-char ISO 17442 Legal Entity Identifier (`client.lei`)
+- `domicile: str` *(optional)* — client's ISO 3166-1 alpha-2 country of domicile, e.g. `"CA"`
 - `limit: int` *(optional, default 20, max 200)*
 - `skip: int` *(optional, default 0)*
 
@@ -74,7 +76,18 @@ Fetch a single security (instrument master record) by its security ID.
 **Parameters:**
 - `security_id: str` — e.g., `"SEC-000001"`
 
-**Returns:** Full security document or `{"error": ..., "code": "NOT_FOUND"}`
+**Returns:** Full security document (including market-level `listings`) or `{"error": ..., "code": "NOT_FOUND"}`
+
+---
+
+#### `get_security_by_sedol`
+
+Fetch the security carrying a given market-level SEDOL. SEDOLs are allocated one per listing market (and per traded currency), so any listing's SEDOL — primary or secondary — resolves to the same parent security.
+
+**Parameters:**
+- `sedol: str` — 7-char LSEG SEDOL, e.g., `"B1WXR90"`
+
+**Returns:** Full security document with all its listings, or NOT_FOUND
 
 ---
 
@@ -86,6 +99,7 @@ List securities with optional filters. Use this to resolve a `securityId` seen o
 - `asset_class: str` *(optional)* — `"EQUITY"`, `"GOVT_BOND"`, `"CORP_BOND"`, `"FUND"`, `"CASH"`
 - `ticker: str` *(optional)* — e.g., `"AAPL"`
 - `status: str` *(optional)* — `"ACTIVE"`, `"MATURED"`, `"DELISTED"`
+- `sedol: str` *(optional)* — matches any listing's SEDOL
 - `limit: int` *(optional, default 50, max 200)*
 - `skip: int` *(optional, default 0)*
 

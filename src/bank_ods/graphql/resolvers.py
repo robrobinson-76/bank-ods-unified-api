@@ -18,8 +18,8 @@ async def resolve_get_account(_obj, _info, accountId: str):
 
 
 @query.field("list_accounts")
-async def resolve_list_accounts(_obj, _info, clientId=None, status=None, limit=20, skip=0):
-    return await svc_accounts.list_accounts(clientId, status, limit, skip)
+async def resolve_list_accounts(_obj, _info, clientId=None, status=None, lei=None, domicile=None, limit=20, skip=0):
+    return await svc_accounts.list_accounts(clientId, status, lei, domicile, limit, skip)
 
 
 # ── Securities ────────────────────────────────────────────────────────────────
@@ -29,9 +29,14 @@ async def resolve_get_security(_obj, _info, securityId: str):
     return await svc_securities.get_security(securityId)
 
 
+@query.field("get_security_by_sedol")
+async def resolve_get_security_by_sedol(_obj, _info, sedol: str):
+    return await svc_securities.get_security_by_sedol(sedol)
+
+
 @query.field("list_securities")
-async def resolve_list_securities(_obj, _info, assetClass=None, ticker=None, status=None, limit=50, skip=0):
-    return await svc_securities.list_securities(assetClass, ticker, status, limit, skip)
+async def resolve_list_securities(_obj, _info, assetClass=None, ticker=None, status=None, sedol=None, limit=50, skip=0):
+    return await svc_securities.list_securities(assetClass, ticker, status, sedol, limit, skip)
 
 
 # ── Transactions ───────────────────────────────────────────────────────────────

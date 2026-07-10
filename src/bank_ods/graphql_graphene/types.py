@@ -13,8 +13,8 @@ declarations here. The trade-offs live elsewhere:
 import graphene
 from graphene_pydantic import PydanticObjectType
 
-from bank_ods.models.account import Account as AccountModel
-from bank_ods.models.security import Security as SecurityModel
+from bank_ods.models.account import Account as AccountModel, ClientMaster as ClientMasterModel
+from bank_ods.models.security import Listing as ListingModel, Security as SecurityModel
 from bank_ods.models.transaction import Transaction as TransactionModel
 from bank_ods.models.position import Position as PositionModel
 from bank_ods.models.settlement import Settlement as SettlementModel, StatusHistoryEntry as StatusHistoryEntryModel
@@ -23,16 +23,38 @@ from bank_ods.models.cash_balance import CashBalance as CashBalanceModel
 
 # ── Entity types ──────────────────────────────────────────────────────────────
 
+class ClientMasterType(PydanticObjectType):
+    class Meta:
+        model = ClientMasterModel
+        name = "ClientMaster"
+
+    # graphene-pydantic maps list[str] as [String]!; the contract requires
+    # inner non-null [String!]! — override explicitly.
+    taxResidencies = graphene.List(graphene.NonNull(graphene.String), required=True)
+
+
 class AccountType(PydanticObjectType):
     class Meta:
         model = AccountModel
         name = "Account"
+
+    # Nested required model must render ClientMaster! to match the contract.
+    client = graphene.Field(ClientMasterType, required=True)
+
+
+class ListingType(PydanticObjectType):
+    class Meta:
+        model = ListingModel
+        name = "Listing"
 
 
 class SecurityType(PydanticObjectType):
     class Meta:
         model = SecurityModel
         name = "Security"
+
+    # Contract requires [Listing!]! (same as SettlementType.statusHistory).
+    listings = graphene.List(graphene.NonNull(ListingType), required=True)
 
 
 class TransactionType(PydanticObjectType):

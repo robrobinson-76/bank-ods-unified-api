@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 import pymongo.errors
 from bank_ods.db.client import get_collection
@@ -63,7 +64,7 @@ async def get_transaction_summary(
     """Aggregate transaction count and netAmount grouped by transactionType and status."""
     try:
         col = get_collection("transactions")
-        pipeline = [
+        pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "accountId": account_id,

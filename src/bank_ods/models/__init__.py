@@ -1,5 +1,5 @@
-from .account import Account
-from .security import Security
+from .account import Account, ClientMaster
+from .security import Listing, Security
 from .transaction import Transaction
 from .position import Position
 from .settlement import Settlement, StatusHistoryEntry
@@ -8,7 +8,9 @@ from .registry import ENTITIES
 
 __all__ = [
     "Account",
+    "ClientMaster",
     "Security",
+    "Listing",
     "Transaction",
     "Position",
     "Settlement",

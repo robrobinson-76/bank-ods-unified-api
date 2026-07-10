@@ -1,6 +1,33 @@
 scalar DateTime
 scalar Decimal
 
+type ClientMaster {
+  clientId: String!
+  clientName: String!
+  lei: String!
+  countryOfDomicile: String!
+  countryOfIncorporation: String!
+  taxResidencies: [String!]!
+  classification: String!
+  kycStatus: String!
+  riskRating: String!
+  legalEntityType: String!
+  parentClientId: String
+}
+
+type Listing {
+  sedol: String!
+  micCode: String!
+  operatingMic: String!
+  exchangeName: String
+  tradedCurrency: String!
+  countryOfListing: String!
+  settlementLocation: String!
+  localCode: String
+  primaryListing: Boolean!
+  status: String!
+}
+
 type StatusHistoryEntry {
   status: String!
   timestamp: DateTime!
@@ -10,8 +37,7 @@ type Account {
   accountId: String!
   accountName: String!
   accountType: String!
-  clientId: String!
-  clientName: String!
+  client: ClientMaster!
   baseCurrency: String!
   status: String!
   openDate: DateTime!
@@ -31,6 +57,7 @@ type Security {
   isin: String
   cusip: String
   ticker: String
+  figi: String
   description: String!
   assetClass: String!
   subType: String!
@@ -41,6 +68,7 @@ type Security {
   maturityDate: DateTime
   couponRate: Decimal
   status: String!
+  listings: [Listing!]!
   createdAt: DateTime!
   updatedAt: DateTime!
 }
@@ -176,11 +204,12 @@ type ProjectedBalance {
 type Query {
   # Accounts
   get_account(accountId: String!): Account
-  list_accounts(clientId: String, status: String, limit: Int, skip: Int): AccountList!
+  list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, skip: Int): AccountList!
 
   # Securities
   get_security(securityId: String!): Security
-  list_securities(assetClass: String, ticker: String, status: String, limit: Int, skip: Int): SecurityList!
+  get_security_by_sedol(sedol: String!): Security
+  list_securities(assetClass: String, ticker: String, status: String, sedol: String, limit: Int, skip: Int): SecurityList!
 
   # Transactions
   get_transaction(transactionId: String!): Transaction

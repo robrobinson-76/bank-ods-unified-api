@@ -9,6 +9,7 @@ import pytest
 from tests.conftest import gql_query
 
 import bank_ods.services.accounts as svc_accounts
+import bank_ods.services.securities as svc_securities
 import bank_ods.services.transactions as svc_transactions
 import bank_ods.services.settlements as svc_settlements
 import bank_ods.services.balances as svc_balances
@@ -30,7 +31,9 @@ async def test_parity4_get_account(rest_client, gql_client, sb_client, first_acc
     account_id = first_account["accountId"]
     q = (
         f'{{ get_account(accountId: "{account_id}") '
-        f'{{ accountId accountName accountType clientId clientName baseCurrency status openDate closeDate custodianBranch createdAt updatedAt }} }}'
+        f'{{ accountId accountName accountType baseCurrency status openDate closeDate custodianBranch createdAt updatedAt '
+        f'client {{ clientId clientName lei countryOfDomicile countryOfIncorporation taxResidencies '
+        f'classification kycStatus riskRating legalEntityType parentClientId }} }} }}'
     )
 
     service = await svc_accounts.get_account(account_id)
@@ -40,7 +43,8 @@ async def test_parity4_get_account(rest_client, gql_client, sb_client, first_acc
 
     # Strawberry must return the identical full record the Ariadne layer returns
     assert sb == ariadne
-    for key in ("accountId", "clientName", "status", "openDate", "createdAt"):
+    assert sb["client"] == service["client"] == rest["client"]
+    for key in ("accountId", "status", "openDate", "createdAt"):
         assert service[key] == rest[key] == ariadne[key] == sb[key]
 
 
@@ -107,6 +111,39 @@ async def test_parity4_settlement_nested_history(gql_client, sb_client, first_se
     if "error" not in service:
         assert sb["settlementId"] == service["settlementId"]
         assert [h["status"] for h in sb["statusHistory"]] == [h["status"] for h in service["statusHistory"]]
+
+
+async def test_parity4_security_nested_listings(rest_client, gql_client, sb_client, dual_listed_security):
+    """Security carries the nested listings list — market-level SEDOL records."""
+    security_id = dual_listed_security["securityId"]
+    q = (
+        f'{{ get_security(securityId: "{security_id}") '
+        f'{{ securityId isin figi assetClass status '
+        f'listings {{ sedol micCode operatingMic exchangeName tradedCurrency '
+        f'countryOfListing settlementLocation localCode primaryListing status }} }} }}'
+    )
+    service = await svc_securities.get_security(security_id)
+    rest = (await rest_client.get(f"/securities/{security_id}")).json()
+    ariadne = (await gql_query(gql_client, q))["data"]["get_security"]
+    sb = (await gql_query(sb_client, q))["data"]["get_security"]
+
+    assert sb == ariadne
+    assert sb["listings"] == service["listings"] == rest["listings"]
+    assert len(sb["listings"]) >= 2
+
+
+async def test_parity4_get_security_by_sedol(gql_client, sb_client, dual_listed_security):
+    sedol = dual_listed_security["listings"][1]["sedol"]
+    q = (
+        f'{{ get_security_by_sedol(sedol: "{sedol}") '
+        f'{{ securityId listings {{ sedol tradedCurrency primaryListing }} }} }}'
+    )
+    service = await svc_securities.get_security_by_sedol(sedol)
+    ariadne = (await gql_query(gql_client, q))["data"]["get_security_by_sedol"]
+    sb = (await gql_query(sb_client, q))["data"]["get_security_by_sedol"]
+
+    assert sb == ariadne
+    assert sb["securityId"] == service["securityId"] == dual_listed_security["securityId"]
 
 
 async def test_parity4_settlement_fails_count(rest_client, gql_client, sb_client):
@@ -192,8 +229,9 @@ fragment T on __Type {
 """
 
 _CONTRACT_TYPES = [
-    "Query", "DateTime",
-    "Account", "AccountList", "Security", "SecurityList",
+    "Query", "DateTime", "Decimal",
+    "Account", "AccountList", "ClientMaster",
+    "Security", "SecurityList", "Listing",
     "Transaction", "TransactionList", "Position", "PositionList",
     "Settlement", "SettlementList", "StatusHistoryEntry",
     "CashBalance", "CashBalanceList",
@@ -245,7 +283,7 @@ async def test_not_found_shape_differs(gql_client, sb_client):
     envelope leaks into field resolution) while Strawberry returns a clean
     null. Clients that inspect `errors` to detect not-found would need to
     change with a Strawberry migration."""
-    q = '{ get_account(accountId: "ACC-DOES-NOT-EXIST") { accountId clientName } }'
+    q = '{ get_account(accountId: "ACC-DOES-NOT-EXIST") { accountId accountName } }'
 
     ariadne = await gql_query(gql_client, q)
     sb = await gql_query(sb_client, q)

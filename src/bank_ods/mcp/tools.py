@@ -21,14 +21,21 @@ async def get_account(account_id: str) -> dict:
 async def list_accounts(
     client_id: Optional[str] = None,
     status: Optional[str] = None,
+    lei: Optional[str] = None,
+    domicile: Optional[str] = None,
     limit: int = 20,
     skip: int = 0,
 ) -> dict:
-    """List accounts with optional filters by client_id and/or status.
+    """List accounts with optional filters by client_id, status, lei (20-char
+    ISO 17442 Legal Entity Identifier), and/or domicile (client's ISO 3166-1
+    alpha-2 country of domicile, e.g. CA, US, GB).
 
     count is the total number of matching accounts; data is one page (use skip to page).
     """
-    return await svc_accounts.list_accounts(client_id, status, limit, skip)
+    return await svc_accounts.list_accounts(
+        client_id=client_id, status=status, lei=lei, domicile=domicile,
+        limit=limit, skip=skip,
+    )
 
 
 # ── Securities ────────────────────────────────────────────────────────────────
@@ -40,19 +47,33 @@ async def get_security(security_id: str) -> dict:
 
 
 @mcp.tool()
+async def get_security_by_sedol(sedol: str) -> dict:
+    """Fetch a security by market-level SEDOL (7-char LSEG identifier, allocated
+    one per listing market and traded currency). Returns the full security with
+    all its listings; the SEDOL may belong to any listing, not just the primary.
+    """
+    return await svc_securities.get_security_by_sedol(sedol)
+
+
+@mcp.tool()
 async def list_securities(
     asset_class: Optional[str] = None,
     ticker: Optional[str] = None,
     status: Optional[str] = None,
+    sedol: Optional[str] = None,
     limit: int = 50,
     skip: int = 0,
 ) -> dict:
     """List securities with optional filters by asset_class (EQUITY, GOVT_BOND,
-    CORP_BOND, FUND, CASH), ticker, and/or status (ACTIVE, MATURED, DELISTED).
+    CORP_BOND, FUND, CASH), ticker, status (ACTIVE, MATURED, DELISTED), and/or
+    sedol (matches any listing's market-level SEDOL).
 
     count is the total number of matching securities; data is one page (use skip to page).
     """
-    return await svc_securities.list_securities(asset_class, ticker, status, limit, skip)
+    return await svc_securities.list_securities(
+        asset_class=asset_class, ticker=ticker, status=status, sedol=sedol,
+        limit=limit, skip=skip,
+    )
 
 
 # ── Transactions ───────────────────────────────────────────────────────────────

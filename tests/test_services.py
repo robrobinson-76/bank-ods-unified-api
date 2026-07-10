@@ -3,6 +3,7 @@ import pytest
 import pytest_asyncio
 
 import bank_ods.services.accounts as svc_accounts
+import bank_ods.services.securities as svc_securities
 import bank_ods.services.transactions as svc_transactions
 import bank_ods.services.positions as svc_positions
 import bank_ods.services.settlements as svc_settlements
@@ -18,7 +19,8 @@ async def test_get_account_found(first_account):
     result = await svc_accounts.get_account(first_account["accountId"])
     assert "error" not in result
     assert result["accountId"] == first_account["accountId"]
-    assert "clientName" in result
+    assert result["client"]["clientName"]
+    assert len(result["client"]["lei"]) == 20
 
 
 async def test_get_account_not_found():
@@ -50,6 +52,58 @@ async def test_list_accounts_skip():
         assert skipped["count"] == full["count"]
         assert len(skipped["data"]) == len(full["data"]) - 1
         assert skipped["data"][0]["accountId"] == full["data"][1]["accountId"]
+
+
+async def test_list_accounts_by_lei(first_account):
+    lei = first_account["client"]["lei"]
+    result = await svc_accounts.list_accounts(lei=lei)
+    assert "error" not in result
+    assert result["count"] > 0
+    for acct in result["data"]:
+        assert acct["client"]["lei"] == lei
+
+
+async def test_list_accounts_by_domicile(first_account):
+    domicile = first_account["client"]["countryOfDomicile"]
+    result = await svc_accounts.list_accounts(domicile=domicile)
+    assert "error" not in result
+    assert result["count"] > 0
+    for acct in result["data"]:
+        assert acct["client"]["countryOfDomicile"] == domicile
+
+
+# ── Securities ────────────────────────────────────────────────────────────────
+
+async def test_get_security_found(first_security):
+    result = await svc_securities.get_security(first_security["securityId"])
+    assert "error" not in result
+    assert result["securityId"] == first_security["securityId"]
+
+
+async def test_get_security_not_found():
+    result = await svc_securities.get_security("SEC-DOES-NOT-EXIST")
+    assert result.get("code") == "NOT_FOUND"
+
+
+async def test_get_security_by_sedol_found(dual_listed_security):
+    # Match on the SECONDARY listing's SEDOL to prove any-element matching.
+    sedol = dual_listed_security["listings"][1]["sedol"]
+    result = await svc_securities.get_security_by_sedol(sedol)
+    assert "error" not in result
+    assert result["securityId"] == dual_listed_security["securityId"]
+
+
+async def test_get_security_by_sedol_not_found():
+    result = await svc_securities.get_security_by_sedol("0000000")
+    assert result.get("code") == "NOT_FOUND"
+
+
+async def test_list_securities_sedol_filter(dual_listed_security):
+    sedol = dual_listed_security["listings"][0]["sedol"]
+    result = await svc_securities.list_securities(sedol=sedol)
+    assert "error" not in result
+    assert result["count"] == 1
+    assert result["data"][0]["securityId"] == dual_listed_security["securityId"]
 
 
 # ── Transactions ───────────────────────────────────────────────────────────────

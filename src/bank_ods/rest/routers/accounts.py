@@ -17,7 +17,12 @@ async def get_account(account_id: str):
 async def list_accounts(
     client_id: Optional[str] = None,
     status: Optional[str] = None,
+    lei: Optional[str] = None,
+    domicile: Optional[str] = None,
     limit: int = 20,
     skip: int = 0,
 ):
-    return check(await svc.list_accounts(client_id, status, limit, skip))
+    return check(await svc.list_accounts(
+        client_id=client_id, status=status, lei=lei, domicile=domicile,
+        limit=limit, skip=skip,
+    ))

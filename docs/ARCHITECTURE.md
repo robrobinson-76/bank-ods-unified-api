@@ -27,7 +27,7 @@ This is a local development prototype, not a production system.
               ┌────────────▼────────────┐
               │     Service Layer       │
               │  bank_ods.services.*    │
-              │  17 async functions     │
+              │  18 async functions     │
               │  Single MongoDB access  │
               │  point for all layers   │
               └────────────┬────────────┘
@@ -68,7 +68,7 @@ This is a local development prototype, not a production system.
                     │  Service Layer  │
                     │  bank_ods.      │
                     │  services.*     │
-                    │  (17 async fns) │
+                    │  (18 async fns) │
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
@@ -142,7 +142,7 @@ mongo-mcp-test/
 │       │   ├── client.py           ← Motor singleton with connection timeouts
 │       │   └── indexes.py          ← ensure_indexes() — idempotent, called on startup
 │       │
-│       ├── services/               ← 17 async business logic functions (only MongoDB access here)
+│       ├── services/               ← 18 async business logic functions (only MongoDB access here)
 │       │   ├── _common.py          ← date helpers (day_range/date_window), clamps, serialize_doc()
 │       │   ├── accounts.py         ← get_account, list_accounts
 │       │   ├── securities.py       ← get_security, list_securities
@@ -153,7 +153,7 @@ mongo-mcp-test/
 │       │
 │       ├── mcp/
 │       │   ├── server.py           ← FastMCP("bank-ods"), lifespan → ensure_indexes()
-│       │   ├── tools.py            ← 17 @mcp.tool() wrappers; each delegates to services
+│       │   ├── tools.py            ← 18 @mcp.tool() wrappers; each delegates to services
 │       │   └── __main__.py         ← reads MCP_TRANSPORT env var; mcp.run(transport=...)
 │       │
 │       ├── rest/
@@ -243,15 +243,28 @@ Six MongoDB collections model a simplified custodian bank ODS. All field names a
 
 ### Collections
 
-#### `accounts` — Account master
+#### `accounts` — Account master (with embedded client master)
+
+Client reference data is **denormalized onto each account** as a required nested `client` sub-document (`ClientMaster` model). There is no separate clients collection; the standard external linkage key is the **LEI (ISO 17442**, 20-char with ISO 7064 MOD 97-10 check pair), and `client.clientId` is the internal key. All accounts of the same client embed an identical snapshot (enforced by `tests/test_master_data.py`).
 
 ```json
 {
   "accountId":       "ACC-000123",
   "accountName":     "Maple Pension Fund - Equity",
   "accountType":     "CUSTODY",
-  "clientId":        "CLT-000042",
-  "clientName":      "Maple Pension Fund",
+  "client": {
+    "clientId":               "CLT-000042",
+    "clientName":             "Maple Pension Fund",
+    "lei":                    "549300ABCDEF12345678",
+    "countryOfDomicile":      "CA",
+    "countryOfIncorporation": "CA",
+    "taxResidencies":         ["CA", "US"],
+    "classification":         "PROFESSIONAL",
+    "kycStatus":              "APPROVED",
+    "riskRating":             "LOW",
+    "legalEntityType":        "FUND",
+    "parentClientId":         null
+  },
   "baseCurrency":    "CAD",
   "status":          "ACTIVE",
   "openDate":        "2018-03-01T00:00:00",
@@ -262,32 +275,73 @@ Six MongoDB collections model a simplified custodian bank ODS. All field names a
 
 `accountType`: CUSTODY | PROPRIETARY | OMNIBUS  
 `status`: ACTIVE | SUSPENDED | CLOSED  
-Indexes: `accountId` (unique), `clientId`, `status`
+`client.classification` (MiFID-style): RETAIL | PROFESSIONAL | ELIGIBLE_COUNTERPARTY  
+`client.kycStatus`: APPROVED | PENDING_REVIEW | EXPIRED  
+`client.riskRating`: LOW | MEDIUM | HIGH  
+`client.legalEntityType`: CORPORATION | PARTNERSHIP | FUND | TRUST | GOVERNMENT | INDIVIDUAL  
+Country fields are ISO 3166-1 alpha-2; `taxResidencies` is the FATCA/CRS jurisdiction list (always contains the domicile). `parentClientId` links a client to its parent in the relationship hierarchy (nullable).  
+Indexes: `accountId` (unique), `client.clientId`, `client.lei`, `status`
 
-#### `securities` — Security master
+#### `securities` — Security master (with market-level listings)
+
+Instruments are identified at two levels, mirroring the standard industry hierarchy (SEDOL Masterfile / FIGI):
+
+- **Issue level** — `isin` (ISO 6166) identifies the security itself; the optional `figi` is the OpenFIGI *share-class* FIGI (1:1 with ISIN).
+- **Market level** — the nested `listings` array (`Listing` model) carries one record per market of listing, each with its own **SEDOL**. SEDOLs are allocated one per country of official listing and, since 2008, one per traded currency on the same venue — so a dual-listed or multi-currency security has multiple listings. Existing mainframes key on SEDOL and match on settlement location; `settlementLocation` carries the market's CSD BIC (DTC / CDS / CREST) for that purpose.
+
+Bonds have `listings: []` (not exchange-listed in this model). Exactly one listing per security is `primaryListing: true`; the top-level `exchange` field remains as a primary-listing display convenience.
 
 ```json
 {
-  "securityId":  "SEC-000001",
-  "isin":        "US0378331005",
-  "cusip":       "037833100",
-  "ticker":      "AAPL",
-  "description": "Apple Inc Common Stock",
+  "securityId":  "SEC-000016",
+  "isin":        "CA7800871021",
+  "cusip":       "780087102",
+  "ticker":      "RY.TO",
+  "figi":        "BBG00XKY2GD5",
+  "description": "Royal Bank of Canada",
   "assetClass":  "EQUITY",
   "subType":     "COMMON_STOCK",
-  "currency":    "USD",
-  "exchange":    "NASDAQ",
-  "issuer":      "Apple Inc",
-  "country":     "US",
+  "currency":    "CAD",
+  "exchange":    "TSX",
+  "issuer":      "Royal Bank of Canada",
+  "country":     "CA",
   "maturityDate": null,
   "couponRate":   null,
-  "status":      "ACTIVE"
+  "status":      "ACTIVE",
+  "listings": [
+    {
+      "sedol":              "B1WXR90",
+      "micCode":            "XTSE",
+      "operatingMic":       "XTSE",
+      "exchangeName":       "TSX",
+      "tradedCurrency":     "CAD",
+      "countryOfListing":   "CA",
+      "settlementLocation": "CDSLCATT",
+      "localCode":          "RY",
+      "primaryListing":     true,
+      "status":             "ACTIVE"
+    },
+    {
+      "sedol":              "B54HW23",
+      "micCode":            "XNYS",
+      "operatingMic":       "XNYS",
+      "exchangeName":       "NYSE",
+      "tradedCurrency":     "USD",
+      "countryOfListing":   "US",
+      "settlementLocation": "DTCYUS33",
+      "localCode":          "RY",
+      "primaryListing":     false,
+      "status":             "ACTIVE"
+    }
+  ]
 }
 ```
 
 `assetClass`: EQUITY | GOVT_BOND | CORP_BOND | FUND | CASH  
 `status`: ACTIVE | MATURED | DELISTED  
-Indexes: `securityId` (unique), `isin` (unique, sparse), `ticker`, `assetClass`
+`listings[].status`: ACTIVE | SUSPENDED | DELISTED  
+`listings[].sedol` is the 7-char LSEG SEDOL (6 alphanumeric excluding vowels + weighted mod-10 check digit). `micCode`/`operatingMic` are ISO 10383 segment and operating MICs (e.g. NASDAQ Global Select = segment `XNGS` under operating `XNAS`). `tradedCurrency` is ISO 4217; `countryOfListing` is ISO 3166-1 alpha-2.  
+Indexes: `securityId` (unique), `isin` (unique, sparse), `ticker`, `assetClass`, `listings.sedol` (unique, partial multikey — see Index Strategy)
 
 #### `transactions` — Trade and cash movements (highest volume)
 
@@ -427,14 +481,16 @@ A date parameter (`as_of_date`, `settlement_date`) means the **whole calendar da
 
 ```python
 get_account(account_id: str) → dict
-list_accounts(client_id=None, status=None, limit=20, skip=0) → dict
+list_accounts(client_id=None, status=None, lei=None, domicile=None, limit=20, skip=0) → dict
+# client_id/lei/domicile match the embedded client-master snapshot
 ```
 
 ### Securities
 
 ```python
 get_security(security_id: str) → dict
-list_securities(asset_class=None, ticker=None, status=None, limit=50, skip=0) → dict
+get_security_by_sedol(sedol: str) → dict   # matches any listing's market-level SEDOL
+list_securities(asset_class=None, ticker=None, status=None, sedol=None, limit=50, skip=0) → dict
 ```
 
 ### Transactions
@@ -488,7 +544,7 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Server ID: `bank-ods`
 - Transport: controlled by `MCP_TRANSPORT` env var (`stdio` default; `sse` for chatbot/K8s)
 - Entry point: `python -m bank_ods.mcp`
-- Tools: 17 `@mcp.tool()` functions in `tools.py`, each a single-line delegate to services
+- Tools: 18 `@mcp.tool()` functions in `tools.py`, each a single-line delegate to services
 - Startup: `ensure_indexes()` via lifespan context manager
 - Tool docstrings are LLM-visible tool descriptions
 
@@ -505,8 +561,8 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 
 | Prefix | Endpoints |
 |---|---|
-| `/accounts` | GET `/{id}`, GET `?client_id&status&limit&skip` |
-| `/securities` | GET `/{id}`, GET `?asset_class&ticker&status&limit&skip` |
+| `/accounts` | GET `/{id}`, GET `?client_id&status&lei&domicile&limit&skip` |
+| `/securities` | GET `/{id}`, GET `/sedol/{sedol}`, GET `?asset_class&ticker&status&sedol&limit&skip` |
 | `/transactions` | GET `/{id}`, GET `?account_id&from_date&to_date&status&transaction_type&limit&skip`, GET `/summary?...` |
 | `/positions` | GET `/{account_id}?as_of_date&skip`, GET `/{account_id}/{security_id}?as_of_date`, GET `/{account_id}/{security_id}/history?from_date&to_date&skip` |
 | `/settlements` | GET `/{id}`, GET `/by-transaction/{txn_id}`, GET `?account_id&settlement_date&status&skip`, GET `/fails?from_date&to_date&account_id&skip` |
@@ -520,7 +576,7 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Endpoint: `POST http://localhost:8001/graphql`
 - Health: `GET /health` → `{"status": "ok"}`
 - SDL generated at runtime from the ENTITIES registry by `sdl.py`
-- 17 query fields with `skip: Int` on all list operations
+- 18 query fields with `skip: Int` on all list operations
 - `DateTime` custom scalar serializes datetime to ISO string (UTC offset included); `Decimal` custom scalar serializes monetary values as exact strings
 - Health: `GET /health` (liveness); `GET /ready` (readiness, pings MongoDB)
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
@@ -537,14 +593,16 @@ Two additional implementations of the identical GraphQL contract, built to evalu
 
 | Collection | Indexes |
 |---|---|
-| accounts | accountId (unique), clientId, status |
-| securities | securityId (unique), isin (unique sparse), ticker, assetClass |
+| accounts | accountId (unique), client.clientId, client.lei, status |
+| securities | securityId (unique), isin (unique sparse), ticker, assetClass, listings.sedol (unique partial multikey) |
 | transactions | transactionId (unique), (accountId, tradeDate desc), status, settlementDate, securityId |
 | positions | (accountId, securityId, asOfDate) compound unique, asOfDate, accountId |
 | settlements | settlementId (unique), transactionId, (accountId, settlementDate), status |
 | cash_balances | (accountId, currency, asOfDate) compound unique, asOfDate |
 
 The compound unique index on `positions` and `cash_balances` enforces the append-only snapshot invariant: only one document per (account, security/currency, date).
+
+The `listings.sedol` index is a **unique partial multikey index** (`partialFilterExpression: {"listings.sedol": {"$exists": true}}`) so securities with no listings (bonds) are excluded cleanly. Note that MongoDB multikey unique indexes enforce uniqueness *across* documents but not *within* one document's array — global SEDOL uniqueness is guaranteed by the seed generator and asserted by `tests/test_master_data.py`.
 
 ---
 
@@ -558,12 +616,13 @@ Tests require a running MongoDB with seeded data (`python scripts/seed_data.py`)
 | `test_rest.py` | REST endpoint HTTP status codes, response shapes, `/health`, 404s, skip pagination |
 | `test_graphql.py` | GraphQL query structure, `/health`, skip pagination |
 | `test_parity.py` | **Cross-layer equivalence** — REST == GraphQL == service for every operation including skip |
-| `test_mcp.py` | MCP parity leg — tool surface (17 tools) + MCP tool results == service results |
+| `test_mcp.py` | MCP parity leg — tool surface (18 tools) + MCP tool results == service results |
 | `test_fixes.py` | Regressions: whole-day date windows, INVALID_DATE→400, securities parity, Decimal strings, UTC offsets, `/ready` |
 | `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
+| `test_master_data.py` | Reference-data integrity — SEDOL/LEI format + check digits, global SEDOL uniqueness, one primary listing per security, identical client-master snapshot across a client's accounts, parentClientId links resolve |
 | `test_strawberry_parity.py`, `test_graphene_parity.py` | Evaluation twins — see REVIEW-strawberry-graphql.md |
 
-94 tests total. All must pass before merge.
+124 tests total. All must pass before merge.
 
 ### Parity Test Pattern
 
@@ -607,7 +666,7 @@ The parity harness is the primary contract enforcement mechanism.
 
 **Models as schema source of truth.** Pydantic field definitions are the only schema definition in the codebase. The ENTITIES registry propagates them to MongoDB index creation and GraphQL SDL generation. This makes schema drift structurally impossible: adding a field to a model automatically updates indexes and the SDL at next startup.
 
-**Single service layer.** All three transports call the same 17 async service functions. No transport contains query logic. This makes transports interchangeable, independently deployable, and parity-testable.
+**Single service layer.** All three transports call the same 18 async service functions. No transport contains query logic. This makes transports interchangeable, independently deployable, and parity-testable.
 
 **Error envelope, never raise.** Service functions return `{"error": ..., "code": ...}` dicts on failure. REST maps these to HTTP status codes via `check()` in `rest/errors.py`. GraphQL resolvers pass through to null-propagation. This keeps error handling explicit and consistent at each transport boundary without using exceptions as control flow.
 

@@ -107,6 +107,62 @@ async def test_ready_endpoints(rest_client, gql_client, sb_client, gr_client):
         assert resp.json() == {"status": "ready"}
 
 
+# ── ClientMaster + Listing model surface ──────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_account_embeds_client_master(rest_client, first_account):
+    """Accounts embed the denormalized client-master snapshot with a 20-char LEI."""
+    r = (await rest_client.get(f"/accounts/{first_account['accountId']}")).json()
+    client = r["client"]
+    assert len(client["lei"]) == 20
+    assert client["classification"] in ("RETAIL", "PROFESSIONAL", "ELIGIBLE_COUNTERPARTY")
+    assert isinstance(client["taxResidencies"], list) and client["taxResidencies"]
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_lei_and_domicile_filters(rest_client, first_account):
+    lei = first_account["client"]["lei"]
+    r = (await rest_client.get("/accounts", params={"lei": lei})).json()
+    assert r["count"] >= 1
+    assert all(a["client"]["lei"] == lei for a in r["data"])
+
+    dom = first_account["client"]["countryOfDomicile"]
+    r2 = (await rest_client.get("/accounts", params={"domicile": dom})).json()
+    assert r2["count"] >= 1
+    assert all(a["client"]["countryOfDomicile"] == dom for a in r2["data"])
+
+
+@pytest.mark.asyncio
+async def test_security_by_sedol_all_layers(rest_client, gql_client, sb_client, gr_client, db):
+    """A listing-level SEDOL resolves to its parent security identically everywhere."""
+    sec = await db.securities.find_one({"listings.0": {"$exists": True}}, {"_id": 0})
+    assert sec is not None
+    sedol = sec["listings"][0]["sedol"]
+
+    service = await svc_securities.get_security_by_sedol(sedol)
+    rest = (await rest_client.get(f"/securities/sedol/{sedol}")).json()
+    q = f'{{ get_security_by_sedol(sedol: "{sedol}") {{ securityId listings {{ sedol micCode tradedCurrency primaryListing status }} }} }}'
+    ariadne = (await gql_query(gql_client, q))["data"]["get_security_by_sedol"]
+    sb = (await gql_query(sb_client, q))["data"]["get_security_by_sedol"]
+    gr = (await gql_query(gr_client, q))["data"]["get_security_by_sedol"]
+
+    assert service["securityId"] == rest["securityId"] == ariadne["securityId"] == sec["securityId"]
+    assert sb == ariadne == gr
+    assert any(l["sedol"] == sedol for l in ariadne["listings"])
+
+
+@pytest.mark.asyncio
+async def test_sedols_globally_unique(db):
+    """One SEDOL per market/currency line, unique across the whole master."""
+    sedols = [
+        l["sedol"]
+        async for doc in db.securities.find({}, {"_id": 0, "listings.sedol": 1})
+        for l in doc.get("listings", [])
+    ]
+    assert sedols, "expected seeded listings"
+    assert len(sedols) == len(set(sedols))
+
+
 # ── Motor client is cached per event loop ─────────────────────────────────────
 
 def test_client_survives_multiple_event_loops():

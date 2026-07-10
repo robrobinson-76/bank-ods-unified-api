@@ -102,11 +102,12 @@ def _list_type_block(model: type[BankDocument]) -> str:
 _QUERY_FIELDS = """
   # Accounts
   get_account(accountId: String!): Account
-  list_accounts(clientId: String, status: String, limit: Int, skip: Int): AccountList!
+  list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, skip: Int): AccountList!
 
   # Securities
   get_security(securityId: String!): Security
-  list_securities(assetClass: String, ticker: String, status: String, limit: Int, skip: Int): SecurityList!
+  get_security_by_sedol(sedol: String!): Security
+  list_securities(assetClass: String, ticker: String, status: String, sedol: String, limit: Int, skip: Int): SecurityList!
 
   # Transactions
   get_transaction(transactionId: String!): Transaction

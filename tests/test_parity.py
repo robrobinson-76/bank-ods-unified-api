@@ -6,6 +6,7 @@ import pytest
 from tests.conftest import gql_query
 
 import bank_ods.services.accounts as svc_accounts
+import bank_ods.services.securities as svc_securities
 import bank_ods.services.transactions as svc_transactions
 import bank_ods.services.settlements as svc_settlements
 import bank_ods.services.balances as svc_balances
@@ -33,12 +34,13 @@ async def test_parity_get_account(rest_client, gql_client, first_account):
     gql_resp = await gql_query(
         gql_client,
         f'{{ get_account(accountId: "{account_id}") '
-        f'{{ accountId accountName accountType clientId clientName baseCurrency status custodianBranch }} }}',
+        f'{{ accountId accountName accountType client {{ clientId clientName lei }} baseCurrency status custodianBranch }} }}',
     )
     gql = gql_resp["data"]["get_account"]
 
     assert service["accountId"] == rest["accountId"] == gql["accountId"]
-    assert service["clientName"] == rest["clientName"] == gql["clientName"]
+    assert service["client"]["clientName"] == rest["client"]["clientName"] == gql["client"]["clientName"]
+    assert service["client"]["lei"] == rest["client"]["lei"] == gql["client"]["lei"]
     assert service["status"] == rest["status"] == gql["status"]
 
 
@@ -72,6 +74,69 @@ async def test_parity_skip_list_accounts(rest_client, gql_client):
     rest_ids = [d["accountId"] for d in rest["data"]]
     gql_ids = [d["accountId"] for d in gql["data"]]
     assert svc_ids == rest_ids == gql_ids
+
+
+# ── Security parity ───────────────────────────────────────────────────────────
+
+async def test_parity_get_security(rest_client, gql_client, first_security):
+    security_id = first_security["securityId"]
+
+    service = await svc_securities.get_security(security_id)
+
+    rest_resp = await rest_client.get(f"/securities/{security_id}")
+    rest = rest_resp.json()
+
+    gql_resp = await gql_query(
+        gql_client,
+        f'{{ get_security(securityId: "{security_id}") '
+        f'{{ securityId isin figi assetClass status listings {{ sedol micCode tradedCurrency }} }} }}',
+    )
+    gql = gql_resp["data"]["get_security"]
+
+    assert service["securityId"] == rest["securityId"] == gql["securityId"]
+    assert service["isin"] == rest["isin"] == gql["isin"]
+    svc_sedols = [lst["sedol"] for lst in service["listings"]]
+    rest_sedols = [lst["sedol"] for lst in rest["listings"]]
+    gql_sedols = [lst["sedol"] for lst in gql["listings"]]
+    assert svc_sedols == rest_sedols == gql_sedols
+
+
+async def test_parity_get_security_by_sedol(rest_client, gql_client, dual_listed_security):
+    # Secondary listing's SEDOL must resolve to the same parent everywhere.
+    sedol = dual_listed_security["listings"][1]["sedol"]
+
+    service = await svc_securities.get_security_by_sedol(sedol)
+
+    rest_resp = await rest_client.get(f"/securities/sedol/{sedol}")
+    rest = rest_resp.json()
+
+    gql_resp = await gql_query(
+        gql_client,
+        f'{{ get_security_by_sedol(sedol: "{sedol}") '
+        f'{{ securityId listings {{ sedol primaryListing settlementLocation }} }} }}',
+    )
+    gql = gql_resp["data"]["get_security_by_sedol"]
+
+    assert service["securityId"] == rest["securityId"] == gql["securityId"]
+    assert service["securityId"] == dual_listed_security["securityId"]
+
+
+async def test_parity_list_securities_sedol_filter(rest_client, gql_client, dual_listed_security):
+    sedol = dual_listed_security["listings"][0]["sedol"]
+
+    service = await svc_securities.list_securities(sedol=sedol)
+
+    rest_resp = await rest_client.get("/securities", params={"sedol": sedol})
+    rest = rest_resp.json()
+
+    gql_resp = await gql_query(
+        gql_client,
+        f'{{ list_securities(sedol: "{sedol}") {{ count data {{ securityId }} }} }}',
+    )
+    gql = gql_resp["data"]["list_securities"]
+
+    assert service["count"] == rest["count"] == gql["count"] == 1
+    assert service["data"][0]["securityId"] == dual_listed_security["securityId"]
 
 
 # ── Transaction parity ────────────────────────────────────────────────────────

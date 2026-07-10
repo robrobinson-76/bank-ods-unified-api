@@ -69,9 +69,12 @@ class Query:
     @strawberry.field
     async def list_accounts(
         self, clientId: Optional[str] = None, status: Optional[str] = None,
+        lei: Optional[str] = None, domicile: Optional[str] = None,
         limit: Optional[int] = 20, skip: Optional[int] = 0,
     ) -> AccountList:
-        result = await svc_accounts.list_accounts(clientId, status, limit if limit is not None else 20, skip or 0)
+        result = await svc_accounts.list_accounts(
+            clientId, status, lei, domicile, limit if limit is not None else 20, skip or 0
+        )
         return _entity_list(result, AccountModel, AccountType, AccountList)
 
     # ── Securities ────────────────────────────────────────────────────────
@@ -81,12 +84,17 @@ class Query:
         return _item(await svc_securities.get_security(securityId), SecurityModel, SecurityType)
 
     @strawberry.field
+    async def get_security_by_sedol(self, sedol: str) -> Optional[SecurityType]:
+        return _item(await svc_securities.get_security_by_sedol(sedol), SecurityModel, SecurityType)
+
+    @strawberry.field
     async def list_securities(
         self, assetClass: Optional[str] = None, ticker: Optional[str] = None,
-        status: Optional[str] = None, limit: Optional[int] = 50, skip: Optional[int] = 0,
+        status: Optional[str] = None, sedol: Optional[str] = None,
+        limit: Optional[int] = 50, skip: Optional[int] = 0,
     ) -> SecurityList:
         result = await svc_securities.list_securities(
-            assetClass, ticker, status, limit if limit is not None else 50, skip or 0
+            assetClass, ticker, status, sedol, limit if limit is not None else 50, skip or 0
         )
         return _entity_list(result, SecurityModel, SecurityType, SecurityList)
 

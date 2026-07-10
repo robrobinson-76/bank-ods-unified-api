@@ -23,10 +23,13 @@ async def get_account(account_id: str) -> dict:
 async def list_accounts(
     client_id: str | None = None,
     status: str | None = None,
+    lei: str | None = None,
+    domicile: str | None = None,
     limit: int = 20,
     skip: int = 0,
 ) -> dict:
-    """List accounts with optional filters by client_id and/or status.
+    """List accounts with optional filters by client_id, status, lei (ISO 17442),
+    and/or domicile (client's ISO 3166-1 alpha-2 country of domicile).
 
     count is the TOTAL number of matching documents; data is the requested page.
     """
@@ -34,9 +37,13 @@ async def list_accounts(
         col = get_collection("accounts")
         query: dict = {}
         if client_id:
-            query["clientId"] = client_id
+            query["client.clientId"] = client_id
         if status:
             query["status"] = status
+        if lei:
+            query["client.lei"] = lei
+        if domicile:
+            query["client.countryOfDomicile"] = domicile
         total = await col.count_documents(query)
         n = clamp_limit(limit)
         cursor = col.find(query, {"_id": 0}).skip(clamp_skip(skip)).limit(n)

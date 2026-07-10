@@ -17,8 +17,8 @@ from decimal import Decimal
 import strawberry
 from strawberry import auto
 
-from bank_ods.models.account import Account as AccountModel
-from bank_ods.models.security import Security as SecurityModel
+from bank_ods.models.account import Account as AccountModel, ClientMaster as ClientMasterModel
+from bank_ods.models.security import Listing as ListingModel, Security as SecurityModel
 from bank_ods.models.transaction import Transaction as TransactionModel
 from bank_ods.models.position import Position as PositionModel
 from bank_ods.models.settlement import Settlement as SettlementModel, StatusHistoryEntry as StatusHistoryEntryModel
@@ -27,13 +27,27 @@ from bank_ods.models.cash_balance import CashBalance as CashBalanceModel
 
 # ── Entity types ──────────────────────────────────────────────────────────────
 
+@strawberry.experimental.pydantic.type(model=ClientMasterModel, name="ClientMaster")
+class ClientMasterType:
+    clientId: auto
+    clientName: auto
+    lei: auto
+    countryOfDomicile: auto
+    countryOfIncorporation: auto
+    taxResidencies: auto
+    classification: str  # Literal — unsupported by strawberry, overridden
+    kycStatus: str  # Literal
+    riskRating: str  # Literal
+    legalEntityType: str  # Literal
+    parentClientId: auto
+
+
 @strawberry.experimental.pydantic.type(model=AccountModel, name="Account")
 class AccountType:
     accountId: auto
     accountName: auto
     accountType: str  # Literal — unsupported by strawberry, overridden
-    clientId: auto
-    clientName: auto
+    client: auto
     baseCurrency: auto
     status: str  # Literal
     openDate: auto
@@ -43,12 +57,27 @@ class AccountType:
     updatedAt: auto
 
 
+@strawberry.experimental.pydantic.type(model=ListingModel, name="Listing")
+class ListingType:
+    sedol: auto
+    micCode: auto
+    operatingMic: auto
+    exchangeName: auto
+    tradedCurrency: auto
+    countryOfListing: auto
+    settlementLocation: auto
+    localCode: auto
+    primaryListing: auto
+    status: str  # Literal
+
+
 @strawberry.experimental.pydantic.type(model=SecurityModel, name="Security")
 class SecurityType:
     securityId: auto
     isin: auto
     cusip: auto
     ticker: auto
+    figi: auto
     description: auto
     assetClass: str  # Literal
     subType: auto
@@ -59,6 +88,7 @@ class SecurityType:
     maturityDate: auto
     couponRate: auto
     status: str  # Literal
+    listings: auto
     createdAt: auto
     updatedAt: auto
 
