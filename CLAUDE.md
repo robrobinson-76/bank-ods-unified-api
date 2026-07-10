@@ -59,6 +59,8 @@ uvicorn bank_ods.graphql_graphene:app --port 8003
 
 Environment: copy `.env.example` to `.env`. See `ARCHITECTURE.md` → Environment Variables.
 
+GraphQL query protection: the Ariadne layer enforces depth, root-field/alias, and introspection limits via `graphql/protection.py`, configured by `GRAPHQL_MAX_DEPTH` / `GRAPHQL_MAX_ROOT_FIELDS` / `GRAPHQL_INTROSPECTION` (introspection should be `false` in production). The generated SDL is snapshot-tested against `tests/schema.snapshot.graphql` — if a model change alters the schema intentionally, regenerate the snapshot in the same commit (command in `tests/test_protection.py`).
+
 ---
 
 ## MCP integration

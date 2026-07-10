@@ -167,6 +167,16 @@ query {
 
 Endpoint: `POST http://localhost:8001/graphql`. SDL is generated at startup from the Pydantic models.
 
+**Query protection** (`bank_ods/graphql/protection.py`): graphql-core validation rules reject abusive queries before any resolver or MongoDB call runs —
+
+| Protection | Env var | Default |
+|---|---|---|
+| Max selection depth (follows fragments) | `GRAPHQL_MAX_DEPTH` | `10` |
+| Max root fields per operation, aliases included (blocks alias amplification — N aliased fields = N MongoDB queries) | `GRAPHQL_MAX_ROOT_FIELDS` | `10` |
+| Introspection (`__schema`/`__type`) — set `false` in production | `GRAPHQL_INTROSPECTION` | `true` |
+
+**Schema governance:** the generated SDL is snapshot-tested against `tests/schema.snapshot.graphql`, so any contract change — usually a model edit — fails CI until the snapshot is deliberately regenerated and reviewed in the same PR.
+
 **Side-by-side library evaluation:** two alternative implementations of the same GraphQL contract exist for comparison — `bank_ods/graphql_strawberry` (Strawberry's experimental Pydantic integration, port 8002, GraphiQL included) and `bank_ods/graphql_graphene` (graphene + graphene-pydantic, port 8003). All three schemas are introspection-identical and answer the same queries — compare them live, or read the findings, benchmarks, and version-landscape facts in [docs/REVIEW-strawberry-graphql.md](docs/REVIEW-strawberry-graphql.md). `tests/test_strawberry_parity.py` and `tests/test_graphene_parity.py` enforce parity against service, REST, and Ariadne.
 
 ---
