@@ -145,7 +145,7 @@ mongo-mcp-test/
 │       ├── services/               ← 18 async business logic functions (only MongoDB access here)
 │       │   ├── _common.py          ← date helpers (day_range/date_window), clamps, serialize_doc()
 │       │   ├── accounts.py         ← get_account, list_accounts
-│       │   ├── securities.py       ← get_security, list_securities
+│       │   ├── securities.py       ← get_security, get_security_by_sedol, list_securities
 │       │   ├── transactions.py     ← get_transaction, get_transactions, get_transaction_summary
 │       │   ├── positions.py        ← get_position, get_positions, get_position_history
 │       │   ├── settlements.py      ← get_settlement, get_settlement_status, get_settlements, get_settlement_fails
@@ -641,7 +641,7 @@ The parity harness is the primary contract enforcement mechanism.
 
 `conftest.py` establishes session-scoped fixtures:
 - `db` — Motor database handle; triggers `ensure_indexes()`
-- `first_account`, `first_balance`, `first_settled_txn` — fetched from seeded DB; known-good test anchors
+- `first_account`, `first_security`, `dual_listed_security`, `first_balance`, `first_settled_txn` — fetched from seeded DB; known-good test anchors (`dual_listed_security` guarantees ≥2 listings)
 - `rest_client` — `httpx.AsyncClient` with ASGI transport (no network)
 - `gql_client` — same for GraphQL app
 
@@ -653,8 +653,8 @@ The parity harness is the primary contract enforcement mechanism.
 
 | Collection | Count | Notes |
 |---|---|---|
-| accounts | 20 | 10 clients; CUSTODY/PROPRIETARY/OMNIBUS mix; weighted ACTIVE |
-| securities | 50 | 30 equities, 15 bonds, 5 ETFs; real-ish tickers |
+| accounts | 20 | 10 clients, each with a consistent embedded client master (format-valid LEI, CA/US/GB/IE domiciles, 2 parent-linked clients); CUSTODY/PROPRIETARY/OMNIBUS mix; weighted ACTIVE |
+| securities | 50 | 30 equities, 15 bonds, 5 ETFs; real-ish tickers; every equity/fund gets ≥1 listing with format-valid SEDOL + MIC + CSD; RY/TD/BNS dual-listed XTSE+XNYS; one XLON ETF listed in USD and GBP (per-currency SEDOL case); bonds have no listings |
 | transactions | 2,000 | Last 90 days; 70% BUY/SELL; 80% SETTLED |
 | settlements | 1,800 | One per trade transaction; full statusHistory |
 | positions | 1,000 | EOD snapshots; account × security × date |
