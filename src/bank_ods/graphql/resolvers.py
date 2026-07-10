@@ -1,6 +1,7 @@
 from ariadne import QueryType
 
 import bank_ods.services.accounts as svc_accounts
+import bank_ods.services.securities as svc_securities
 import bank_ods.services.transactions as svc_transactions
 import bank_ods.services.positions as svc_positions
 import bank_ods.services.settlements as svc_settlements
@@ -19,6 +20,18 @@ async def resolve_get_account(_obj, _info, accountId: str):
 @query.field("list_accounts")
 async def resolve_list_accounts(_obj, _info, clientId=None, status=None, limit=20, skip=0):
     return await svc_accounts.list_accounts(clientId, status, limit, skip)
+
+
+# ── Securities ────────────────────────────────────────────────────────────────
+
+@query.field("get_security")
+async def resolve_get_security(_obj, _info, securityId: str):
+    return await svc_securities.get_security(securityId)
+
+
+@query.field("list_securities")
+async def resolve_list_securities(_obj, _info, assetClass=None, ticker=None, status=None, limit=50, skip=0):
+    return await svc_securities.list_securities(assetClass, ticker, status, limit, skip)
 
 
 # ── Transactions ───────────────────────────────────────────────────────────────

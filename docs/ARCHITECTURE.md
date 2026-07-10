@@ -27,7 +27,7 @@ This is a local development prototype, not a production system.
               ┌────────────▼────────────┐
               │     Service Layer       │
               │  bank_ods.services.*    │
-              │  15 async functions     │
+              │  17 async functions     │
               │  Single MongoDB access  │
               │  point for all layers   │
               └────────────┬────────────┘
@@ -68,7 +68,7 @@ This is a local development prototype, not a production system.
                     │  Service Layer  │
                     │  bank_ods.      │
                     │  services.*     │
-                    │  (15 async fns) │
+                    │  (17 async fns) │
                     └────────┬────────┘
                              │
                     ┌────────▼────────┐
@@ -142,9 +142,10 @@ mongo-mcp-test/
 │       │   ├── client.py           ← Motor singleton with connection timeouts
 │       │   └── indexes.py          ← ensure_indexes() — idempotent, called on startup
 │       │
-│       ├── services/               ← 15 async business logic functions (only MongoDB access here)
-│       │   ├── _common.py          ← parse_date(), clamp_limit(), clamp_skip(), serialize_doc()
+│       ├── services/               ← 17 async business logic functions (only MongoDB access here)
+│       │   ├── _common.py          ← date helpers (day_range/date_window), clamps, serialize_doc()
 │       │   ├── accounts.py         ← get_account, list_accounts
+│       │   ├── securities.py       ← get_security, list_securities
 │       │   ├── transactions.py     ← get_transaction, get_transactions, get_transaction_summary
 │       │   ├── positions.py        ← get_position, get_positions, get_position_history
 │       │   ├── settlements.py      ← get_settlement, get_settlement_status, get_settlements, get_settlement_fails
@@ -152,14 +153,15 @@ mongo-mcp-test/
 │       │
 │       ├── mcp/
 │       │   ├── server.py           ← FastMCP("bank-ods"), lifespan → ensure_indexes()
-│       │   ├── tools.py            ← 15 @mcp.tool() wrappers; each delegates to services
+│       │   ├── tools.py            ← 17 @mcp.tool() wrappers; each delegates to services
 │       │   └── __main__.py         ← reads MCP_TRANSPORT env var; mcp.run(transport=...)
 │       │
 │       ├── rest/
-│       │   ├── app.py              ← FastAPI app, /health, RequestLoggingMiddleware, lifespan
-│       │   ├── errors.py           ← check() — maps service error envelopes to HTTP 404/500
+│       │   ├── app.py              ← FastAPI app, /health + /ready, RequestLoggingMiddleware, lifespan
+│       │   ├── errors.py           ← check() — maps service error envelopes to HTTP 400/404/500
 │       │   └── routers/
 │       │       ├── accounts.py
+│       │       ├── securities.py
 │       │       ├── transactions.py
 │       │       ├── positions.py
 │       │       ├── settlements.py
@@ -405,17 +407,34 @@ All service functions are `async def`. All accept and return plain Python dicts 
 
 Every service function returns one of:
 - `{...data fields...}` — success (single item)
-- `{"count": N, "data": [...]}` — success (list)
+- `{"count": N, "data": [...]}` — success (list); **count is the TOTAL number of matching documents**, data is one page
 - `{"error": "...", "code": "NOT_FOUND"}` — item not found
-- `{"error": "...", "code": "MONGO_ERROR"}` — database error
+- `{"error": "...", "code": "INVALID_DATE"}` — malformed date parameter (REST maps to 400)
+- `{"error": "Database error", "code": "MONGO_ERROR"}` — database error (details are logged server-side, never sent to clients)
 
 Functions never raise exceptions to callers. Transport layers translate these envelopes to appropriate protocol-level errors.
+
+### Date Semantics
+
+A date parameter (`as_of_date`, `settlement_date`) means the **whole calendar day (UTC)** — documents stamped at any intraday time (e.g. 16:00 EOD snapshots) match. Date ranges (`from_date`/`to_date`) are inclusive of both end days, implemented as `$gte day_start(from), $lt day_start(to)+1d` (see `services/_common.py`).
+
+### Value Serialization
+
+- **Money/quantities/rates:** stored as MongoDB `Decimal128`, typed `decimal.Decimal` in the Pydantic models, and serialized as **exact strings** (`"18550.00"`) at the service boundary. GraphQL exposes them via a `Decimal` scalar; floats are never used for monetary values.
+- **Timestamps:** ISO 8601 with explicit UTC offset (`2026-05-31T16:00:00+00:00`).
 
 ### Accounts
 
 ```python
 get_account(account_id: str) → dict
 list_accounts(client_id=None, status=None, limit=20, skip=0) → dict
+```
+
+### Securities
+
+```python
+get_security(security_id: str) → dict
+list_securities(asset_class=None, ticker=None, status=None, limit=50, skip=0) → dict
 ```
 
 ### Transactions
@@ -456,7 +475,7 @@ get_projected_balance(account_id, currency, as_of_date) → dict
 
 ### Pagination
 
-All list operations accept `skip: int = 0` (clamped to ≥0) and `limit` (clamped to `[1, 200]`). Default limits: accounts 20, transactions 50, others 200.
+All list operations accept `skip: int = 0` (clamped to ≥0) and, where exposed, `limit` (clamped to `[1, 200]`). Page sizes: accounts 20 (default), securities/transactions 50 (default), positions/settlements 200 (fixed), balances 50 (fixed). `count` is always the total; more pages exist while `skip + len(data) < count`.
 
 ---
 
@@ -469,7 +488,7 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Server ID: `bank-ods`
 - Transport: controlled by `MCP_TRANSPORT` env var (`stdio` default; `sse` for chatbot/K8s)
 - Entry point: `python -m bank_ods.mcp`
-- Tools: 15 `@mcp.tool()` functions in `tools.py`, each a single-line delegate to services
+- Tools: 17 `@mcp.tool()` functions in `tools.py`, each a single-line delegate to services
 - Startup: `ensure_indexes()` via lifespan context manager
 - Tool docstrings are LLM-visible tool descriptions
 
@@ -478,15 +497,16 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Framework: FastAPI
 - Entry point: `uvicorn bank_ods.rest:app --port 8000`
 - Docs: `http://localhost:8000/docs` (Swagger UI)
-- Health: `GET /health` → `{"status": "ok"}`
-- Error mapping: HTTP 404 (NOT_FOUND), 500 (MONGO_ERROR) via `rest/errors.py check()`
-- 5 routers: accounts, transactions, positions, settlements, balances
+- Health: `GET /health` (liveness) → `{"status": "ok"}`; `GET /ready` (readiness, pings MongoDB) → `{"status": "ready"}` or 503
+- Error mapping: HTTP 400 (INVALID_DATE), 404 (NOT_FOUND), 500 (MONGO_ERROR) via `rest/errors.py check()`
+- 6 routers: accounts, securities, transactions, positions, settlements, balances
 
 **Endpoint summary:**
 
 | Prefix | Endpoints |
 |---|---|
 | `/accounts` | GET `/{id}`, GET `?client_id&status&limit&skip` |
+| `/securities` | GET `/{id}`, GET `?asset_class&ticker&status&limit&skip` |
 | `/transactions` | GET `/{id}`, GET `?account_id&from_date&to_date&status&transaction_type&limit&skip`, GET `/summary?...` |
 | `/positions` | GET `/{account_id}?as_of_date&skip`, GET `/{account_id}/{security_id}?as_of_date`, GET `/{account_id}/{security_id}/history?from_date&to_date&skip` |
 | `/settlements` | GET `/{id}`, GET `/by-transaction/{txn_id}`, GET `?account_id&settlement_date&status&skip`, GET `/fails?from_date&to_date&account_id&skip` |
@@ -500,8 +520,9 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Endpoint: `POST http://localhost:8001/graphql`
 - Health: `GET /health` → `{"status": "ok"}`
 - SDL generated at runtime from the ENTITIES registry by `sdl.py`
-- 15 query fields with `skip: Int` on all list operations
-- `DateTime` custom scalar serializes datetime to ISO string
+- 17 query fields with `skip: Int` on all list operations
+- `DateTime` custom scalar serializes datetime to ISO string (UTC offset included); `Decimal` custom scalar serializes monetary values as exact strings
+- Health: `GET /health` (liveness); `GET /ready` (readiness, pings MongoDB)
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
 - Query protection via graphql-core validation rules (`graphql/protection.py`): depth limit, root-field/alias cap, and an introspection kill-switch — all env-configurable (see Environment Variables); rejected queries never reach resolvers or MongoDB
 - Contract governance: `tests/test_protection.py` asserts the generated SDL matches the checked-in `tests/schema.snapshot.graphql`, so any schema change shows up as a reviewable diff
@@ -537,8 +558,12 @@ Tests require a running MongoDB with seeded data (`python scripts/seed_data.py`)
 | `test_rest.py` | REST endpoint HTTP status codes, response shapes, `/health`, 404s, skip pagination |
 | `test_graphql.py` | GraphQL query structure, `/health`, skip pagination |
 | `test_parity.py` | **Cross-layer equivalence** — REST == GraphQL == service for every operation including skip |
+| `test_mcp.py` | MCP parity leg — tool surface (17 tools) + MCP tool results == service results |
+| `test_fixes.py` | Regressions: whole-day date windows, INVALID_DATE→400, securities parity, Decimal strings, UTC offsets, `/ready` |
+| `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
+| `test_strawberry_parity.py`, `test_graphene_parity.py` | Evaluation twins — see REVIEW-strawberry-graphql.md |
 
-49 tests total. All must pass before merge.
+94 tests total. All must pass before merge.
 
 ### Parity Test Pattern
 
@@ -582,13 +607,17 @@ The parity harness is the primary contract enforcement mechanism.
 
 **Models as schema source of truth.** Pydantic field definitions are the only schema definition in the codebase. The ENTITIES registry propagates them to MongoDB index creation and GraphQL SDL generation. This makes schema drift structurally impossible: adding a field to a model automatically updates indexes and the SDL at next startup.
 
-**Single service layer.** All three transports call the same 15 async service functions. No transport contains query logic. This makes transports interchangeable, independently deployable, and parity-testable.
+**Single service layer.** All three transports call the same 17 async service functions. No transport contains query logic. This makes transports interchangeable, independently deployable, and parity-testable.
 
 **Error envelope, never raise.** Service functions return `{"error": ..., "code": ...}` dicts on failure. REST maps these to HTTP status codes via `check()` in `rest/errors.py`. GraphQL resolvers pass through to null-propagation. This keeps error handling explicit and consistent at each transport boundary without using exceptions as control flow.
 
 **Append-only snapshots for temporal data.** Positions and balances write new documents per date rather than updating in place. This preserves full history without a change-log pattern and makes time-range queries O(index scan), not O(changelog replay).
 
-**ISO 8601 at boundaries.** External APIs send and receive `"YYYY-MM-DD"` strings. Services parse to `datetime` internally. Serialization back to strings happens in `serialize_doc()` at the return boundary.
+**ISO 8601 at boundaries.** External APIs send and receive `"YYYY-MM-DD"` strings. Services parse to `datetime` internally. Serialization back to strings happens in `serialize_doc()` at the return boundary, always with an explicit UTC offset (`+00:00`). A date parameter means the whole calendar day; ranges are inclusive of both end days.
+
+**Decimal128 for money.** Monetary amounts, quantities, and rates are stored as MongoDB `Decimal128`, typed `decimal.Decimal` in the models, and serialized as exact strings on the wire (GraphQL `Decimal` scalar). IEEE-754 floats are never used for money.
+
+**count = total.** List envelopes return the total number of matching documents in `count` and one page in `data`, so clients can paginate without over-fetching.
 
 **SDL at runtime.** The GraphQL schema is generated from Pydantic models at process startup, not from a static `.graphql` file. The schema is always consistent with the Python models.
 
@@ -695,8 +724,9 @@ The codebase includes K8s manifests for running the three transports as separate
 
 | Manifest | Description |
 |---|---|
+| `namespace.yaml` | `bank-ods` namespace |
 | `configmap.yaml` | `MONGODB_DB`, `LOG_LEVEL`, `DEBUG`, `MONGO_TIMEOUT_MS` + MongoDB URI secret |
-| `rest-deployment.yaml` | 2 replicas; `/health` liveness + readiness |
+| `rest-deployment.yaml` | 2 replicas; `/health` liveness, `/ready` readiness (pings MongoDB) |
 | `rest-service.yaml` | ClusterIP |
 | `graphql-deployment.yaml` | 2 replicas baseline |
 | `graphql-service.yaml` | ClusterIP |

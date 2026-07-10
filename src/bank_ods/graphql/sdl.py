@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import typing
+from decimal import Decimal
 from typing import Any, get_args, get_origin
 
 from bank_ods.models.registry import ENTITIES
@@ -15,6 +16,7 @@ _SCALAR_MAP: dict[Any, str] = {
     int: "Int",
     float: "Float",
     bool: "Boolean",
+    Decimal: "Decimal",
 }
 
 
@@ -102,6 +104,10 @@ _QUERY_FIELDS = """
   get_account(accountId: String!): Account
   list_accounts(clientId: String, status: String, limit: Int, skip: Int): AccountList!
 
+  # Securities
+  get_security(securityId: String!): Security
+  list_securities(assetClass: String, ticker: String, status: String, limit: Int, skip: Int): SecurityList!
+
   # Transactions
   get_transaction(transactionId: String!): Transaction
   get_transactions(accountId: String!, fromDate: String!, toDate: String!, status: String, transactionType: String, limit: Int, skip: Int): TransactionList!
@@ -129,7 +135,7 @@ type TransactionSummaryItem {
   transactionType: String!
   status: String!
   count: Int!
-  totalNetAmount: Float!
+  totalNetAmount: Decimal!
 }
 
 type TransactionSummaryList {
@@ -141,10 +147,10 @@ type ProjectedBalance {
   accountId: String!
   currency: String!
   asOfDate: String!
-  closingBalance: Float
-  pendingCredits: Float
-  pendingDebits: Float
-  projectedBalance: Float
+  closingBalance: Decimal
+  pendingCredits: Decimal
+  pendingDebits: Decimal
+  projectedBalance: Decimal
 }
 """
 
@@ -153,6 +159,7 @@ def generate_sdl() -> str:
     """Build the full GraphQL SDL string from the entity models."""
     blocks: list[str] = [
         "scalar DateTime",
+        "scalar Decimal",
         "",
     ]
 

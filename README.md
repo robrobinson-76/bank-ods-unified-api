@@ -21,7 +21,7 @@ The domain is a simplified custodian bank ODS (accounts, positions, transactions
       ┌────────────▼────────────┐
       │     Service Layer       │
       │  bank_ods.services.*   │
-      │  15 async functions     │
+      │  17 async functions     │
       │  One MongoDB access     │
       │  point for all layers   │
       └────────────┬────────────┘
@@ -90,7 +90,7 @@ Copy `.env.example` to `.env` before running.
 src/bank_ods/
 ├── models/          Pydantic v2 entity models + ENTITIES registry
 ├── db/              Motor client + ensure_indexes()
-├── services/        15 async functions — all MongoDB access lives here
+├── services/        17 async functions — all MongoDB access lives here
 ├── mcp/             @mcp.tool() wrappers → services (fastmcp)
 ├── rest/            FastAPI routers → services
 ├── graphql/         Ariadne resolvers → services; SDL generated from models
@@ -119,7 +119,7 @@ Six MongoDB collections covering a read-only custodian bank ODS view:
 
 ### MCP
 
-Exposes 15 read-only tools to any MCP-capable client (Claude Desktop, VS Code, etc.).
+Exposes 17 read-only tools to any MCP-capable client (Claude Desktop, VS Code, etc.).
 
 Register in `claude_desktop_config.json`:
 
@@ -145,6 +145,7 @@ Tools appear as `mcp__bank-ods__get_account`, `mcp__bank-ods__get_transactions`,
 
 ```
 GET /accounts/{id}
+GET /securities?asset_class=&ticker=&status=
 GET /transactions?account_id=&from_date=&to_date=
 GET /positions/{account_id}?as_of_date=
 GET /settlements/fails?from_date=&to_date=
@@ -219,14 +220,16 @@ All business logic lives in `bank_ods/services/`. Functions are `async def`, acc
 # Success (single)
 {"accountId": "ACC-0001", "accountName": "...", ...}
 
-# Success (list)
+# Success (list) — count is the TOTAL matching documents; data is one page
 {"count": 42, "data": [...]}
 
-# Error
-{"error": "Account not found", "code": "NOT_FOUND"}
+# Errors
+{"error": "Not found", "code": "NOT_FOUND"}             # → HTTP 404
+{"error": "Invalid date: ...", "code": "INVALID_DATE"}  # → HTTP 400
+{"error": "Database error", "code": "MONGO_ERROR"}      # → HTTP 500 (details logged server-side)
 ```
 
-Transport layers translate these envelopes to protocol-level responses (HTTP 404, GraphQL null-propagation) via thin adapter code. Functions never raise to callers.
+Transport layers translate these envelopes to protocol-level responses via thin adapter code. Functions never raise to callers. Monetary values are MongoDB Decimal128 serialized as exact strings; timestamps carry an explicit UTC offset; date parameters mean the whole calendar day and ranges are inclusive.
 
 ---
 
@@ -246,7 +249,7 @@ pytest tests/ -v
 | `test_graphene_parity.py` | Graphene twin — same harness against port-8003 implementation |
 | `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
 
-82 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
+94 tests. The parity tests are the primary contract: if all transports return the same result, the pattern is working.
 
 ---
 

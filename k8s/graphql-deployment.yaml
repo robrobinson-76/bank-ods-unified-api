@@ -18,7 +18,8 @@ spec:
       containers:
         - name: graphql
           image: bank-ods-graphql:latest
-          imagePullPolicy: Always
+          # Locally-built image (no registry); Always would fail the pull.
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8001
           envFrom:
@@ -42,7 +43,8 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              # /ready pings MongoDB; /health only proves the process is up.
+              path: /ready
               port: 8001
             initialDelaySeconds: 5
             periodSeconds: 10

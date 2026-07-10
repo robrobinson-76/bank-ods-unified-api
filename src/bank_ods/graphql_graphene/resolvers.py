@@ -12,12 +12,14 @@ exception (GraphQL errors array) for lists.
 import graphene
 
 import bank_ods.services.accounts as svc_accounts
+import bank_ods.services.securities as svc_securities
 import bank_ods.services.transactions as svc_transactions
 import bank_ods.services.positions as svc_positions
 import bank_ods.services.settlements as svc_settlements
 import bank_ods.services.balances as svc_balances
 
 from bank_ods.models.account import Account as AccountModel
+from bank_ods.models.security import Security as SecurityModel
 from bank_ods.models.transaction import Transaction as TransactionModel
 from bank_ods.models.position import Position as PositionModel
 from bank_ods.models.settlement import Settlement as SettlementModel
@@ -25,6 +27,7 @@ from bank_ods.models.cash_balance import CashBalance as CashBalanceModel
 
 from bank_ods.graphql_graphene.types import (
     AccountType, AccountList,
+    SecurityType, SecurityList,
     TransactionType, TransactionList, TransactionSummaryItem, TransactionSummaryList,
     PositionType, PositionList,
     SettlementType, SettlementList,
@@ -62,6 +65,22 @@ class Query(graphene.ObjectType):
     async def resolve_list_accounts(self, _info, clientId=None, status=None, limit=20, skip=0):
         return _entity_list(await svc_accounts.list_accounts(clientId, status, limit, skip),
                             AccountModel, AccountList)
+
+    # ── Securities ────────────────────────────────────────────────────────
+
+    get_security = graphene.Field(SecurityType, securityId=graphene.String(required=True))
+    list_securities = graphene.Field(
+        SecurityList, required=True,
+        assetClass=graphene.String(), ticker=graphene.String(), status=graphene.String(),
+        limit=graphene.Int(), skip=graphene.Int(),
+    )
+
+    async def resolve_get_security(self, _info, securityId):
+        return _item(await svc_securities.get_security(securityId), SecurityModel)
+
+    async def resolve_list_securities(self, _info, assetClass=None, ticker=None, status=None, limit=50, skip=0):
+        result = await svc_securities.list_securities(assetClass, ticker, status, limit, skip)
+        return _entity_list(result, SecurityModel, SecurityList)
 
     # ── Transactions ──────────────────────────────────────────────────────
 

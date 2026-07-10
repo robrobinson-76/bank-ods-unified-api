@@ -12,6 +12,7 @@ the Ariadne SDL generator, which derives the schema from the ENTITIES
 registry automatically.
 """
 import typing
+from decimal import Decimal
 
 import strawberry
 from strawberry import auto
@@ -195,7 +196,7 @@ class TransactionSummaryItem:
     transactionType: str
     status: str
     count: int
-    totalNetAmount: float
+    totalNetAmount: Decimal
 
 
 @strawberry.type(name="TransactionSummaryList")
@@ -209,7 +210,7 @@ class ProjectedBalance:
     accountId: str
     currency: str
     asOfDate: str
-    closingBalance: typing.Optional[float]
-    pendingCredits: typing.Optional[float]
-    pendingDebits: typing.Optional[float]
-    projectedBalance: typing.Optional[float]
+    closingBalance: typing.Optional[Decimal]
+    pendingCredits: typing.Optional[Decimal]
+    pendingDebits: typing.Optional[Decimal]
+    projectedBalance: typing.Optional[Decimal]

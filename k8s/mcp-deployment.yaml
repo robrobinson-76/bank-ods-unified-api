@@ -20,7 +20,8 @@ spec:
       containers:
         - name: mcp
           image: bank-ods-mcp:latest
-          imagePullPolicy: Always
+          # Locally-built image (no registry); Always would fail the pull.
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002
           env:

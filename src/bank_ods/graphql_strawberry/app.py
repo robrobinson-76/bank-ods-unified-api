@@ -4,27 +4,24 @@ Run: uvicorn bank_ods.graphql_strawberry:app --port 8002
 Endpoint: POST http://localhost:8002/graphql/
 
 auto_camel_case=False keeps the snake_case query names (get_account, ...) of
-the existing contract. Security/SecurityList are passed explicitly via
-`types=` because no query field references them; Strawberry only includes
-reachable types, whereas the Ariadne SDL generator emits every ENTITIES model.
+the existing contract.
 """
 from contextlib import asynccontextmanager
 
 import strawberry
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from strawberry.fastapi import GraphQLRouter
 from strawberry.schema.config import StrawberryConfig
 
 from bank_ods.config import LOG_LEVEL
+from bank_ods.db.client import get_db
 from bank_ods.db.indexes import ensure_indexes
 from bank_ods.graphql_strawberry.resolvers import Query
-from bank_ods.graphql_strawberry.types import SecurityType, SecurityList
 from bank_ods.logging_config import RequestLoggingMiddleware, configure_logging
 
 schema = strawberry.Schema(
     query=Query,
     config=StrawberryConfig(auto_camel_case=False),
-    types=[SecurityType, SecurityList],
 )
 
 
@@ -45,6 +42,14 @@ def create_app() -> FastAPI:
     @fast.get("/health", tags=["ops"])
     async def health():
         return {"status": "ok"}
+
+    @fast.get("/ready", tags=["ops"])
+    async def ready():
+        try:
+            await get_db().command("ping")
+            return {"status": "ready"}
+        except Exception:
+            raise HTTPException(status_code=503, detail="MongoDB unreachable")
 
     @fast.get("/")
     async def root():

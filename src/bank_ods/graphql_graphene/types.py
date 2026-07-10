@@ -92,7 +92,7 @@ class TransactionSummaryItem(graphene.ObjectType):
     transactionType = graphene.String(required=True)
     status = graphene.String(required=True)
     count = graphene.Int(required=True)
-    totalNetAmount = graphene.Float(required=True)
+    totalNetAmount = graphene.Decimal(required=True)
 
 
 TransactionSummaryList = _list_wrapper("TransactionSummaryList", TransactionSummaryItem)
@@ -102,7 +102,7 @@ class ProjectedBalance(graphene.ObjectType):
     accountId = graphene.String(required=True)
     currency = graphene.String(required=True)
     asOfDate = graphene.String(required=True)
-    closingBalance = graphene.Float()
-    pendingCredits = graphene.Float()
-    pendingDebits = graphene.Float()
-    projectedBalance = graphene.Float()
+    closingBalance = graphene.Decimal()
+    pendingCredits = graphene.Decimal()
+    pendingDebits = graphene.Decimal()
+    projectedBalance = graphene.Decimal()

@@ -16,12 +16,14 @@ from typing import Optional
 import strawberry
 
 import bank_ods.services.accounts as svc_accounts
+import bank_ods.services.securities as svc_securities
 import bank_ods.services.transactions as svc_transactions
 import bank_ods.services.positions as svc_positions
 import bank_ods.services.settlements as svc_settlements
 import bank_ods.services.balances as svc_balances
 
 from bank_ods.models.account import Account as AccountModel
+from bank_ods.models.security import Security as SecurityModel
 from bank_ods.models.transaction import Transaction as TransactionModel
 from bank_ods.models.position import Position as PositionModel
 from bank_ods.models.settlement import Settlement as SettlementModel
@@ -29,6 +31,7 @@ from bank_ods.models.cash_balance import CashBalance as CashBalanceModel
 
 from bank_ods.graphql_strawberry.types import (
     AccountType, AccountList,
+    SecurityType, SecurityList,
     TransactionType, TransactionList, TransactionSummaryItem, TransactionSummaryList,
     PositionType, PositionList,
     SettlementType, SettlementList,
@@ -70,6 +73,22 @@ class Query:
     ) -> AccountList:
         result = await svc_accounts.list_accounts(clientId, status, limit if limit is not None else 20, skip or 0)
         return _entity_list(result, AccountModel, AccountType, AccountList)
+
+    # ── Securities ────────────────────────────────────────────────────────
+
+    @strawberry.field
+    async def get_security(self, securityId: str) -> Optional[SecurityType]:
+        return _item(await svc_securities.get_security(securityId), SecurityModel, SecurityType)
+
+    @strawberry.field
+    async def list_securities(
+        self, assetClass: Optional[str] = None, ticker: Optional[str] = None,
+        status: Optional[str] = None, limit: Optional[int] = 50, skip: Optional[int] = 0,
+    ) -> SecurityList:
+        result = await svc_securities.list_securities(
+            assetClass, ticker, status, limit if limit is not None else 50, skip or 0
+        )
+        return _entity_list(result, SecurityModel, SecurityType, SecurityList)
 
     # ── Transactions ──────────────────────────────────────────────────────
 

@@ -4,7 +4,12 @@
 
 This guide covers how AI agents (Claude Code or any MCP-capable client) should interact with the `bank-ods` MCP server: tool naming conventions, parameter formats, query patterns, error handling, and pagination.
 
-The MCP server is one of three transports sharing a single service layer. All tools delegate to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs. There are 15 read-only tools across five domains.
+The MCP server is one of three transports sharing a single service layer. All tools delegate to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs. There are 17 read-only tools across six domains.
+
+Two contract conventions apply everywhere:
+
+- **`count` is the total.** List results return `{"count": <total matching>, "data": [<one page>]}`. More records exist while `skip + len(data) < count`.
+- **Monetary values are exact strings.** Amounts, quantities, and rates are stored as Decimal128 and serialized as strings (e.g. `"18550.00"`), never floats. Timestamps are ISO 8601 with an explicit UTC offset (`2026-05-31T16:00:00+00:00`).
 
 ---
 
@@ -22,8 +27,8 @@ All tools follow snake_case verb-noun patterns:
 
 | Pattern | Examples |
 |---|---|
-| `get_<entity>` | `get_account`, `get_transaction`, `get_settlement` |
-| `list_<entities>` | `list_accounts` |
+| `get_<entity>` | `get_account`, `get_security`, `get_transaction`, `get_settlement` |
+| `list_<entities>` | `list_accounts`, `list_securities` |
 | `get_<entities>` | `get_transactions`, `get_positions`, `get_settlements` |
 | `get_<entity>_<qualifier>` | `get_settlement_status`, `get_settlement_fails`, `get_transaction_summary`, `get_position_history`, `get_projected_balance` |
 
@@ -57,6 +62,34 @@ List accounts with optional filters.
 - `skip: int` *(optional, default 0)*
 
 **Returns:** `{"count": N, "data": [...]}`
+
+---
+
+### Securities
+
+#### `get_security`
+
+Fetch a single security (instrument master record) by its security ID.
+
+**Parameters:**
+- `security_id: str` — e.g., `"SEC-000001"`
+
+**Returns:** Full security document or `{"error": ..., "code": "NOT_FOUND"}`
+
+---
+
+#### `list_securities`
+
+List securities with optional filters. Use this to resolve a `securityId` seen on positions/transactions into its full instrument details.
+
+**Parameters:**
+- `asset_class: str` *(optional)* — `"EQUITY"`, `"GOVT_BOND"`, `"CORP_BOND"`, `"FUND"`, `"CASH"`
+- `ticker: str` *(optional)* — e.g., `"AAPL"`
+- `status: str` *(optional)* — `"ACTIVE"`, `"MATURED"`, `"DELISTED"`
+- `limit: int` *(optional, default 50, max 200)*
+- `skip: int` *(optional, default 0)*
+
+**Returns:** `{"count": N, "data": [...]}` sorted by securityId
 
 ---
 
@@ -235,6 +268,8 @@ Always use ISO 8601 full date format:
 ✗  "2025-3-31"
 ```
 
+A date parameter means the **whole calendar day (UTC)** — documents stamped at any time on that day match. Date ranges are inclusive of both `from_date` and `to_date`. A malformed date returns `{"error": ..., "code": "INVALID_DATE"}`.
+
 ### IDs
 
 IDs are opaque strings from seed data. Do not construct or guess them. Always discover IDs from list/query results before fetching a specific record.
@@ -262,7 +297,7 @@ All tools return errors as plain dicts, never as exceptions.
 ```python
 result = get_account(account_id="ACC-0001")
 if "error" in result:
-    # result["code"] is "NOT_FOUND" or "MONGO_ERROR"
+    # result["code"] is "NOT_FOUND", "INVALID_DATE", or "MONGO_ERROR"
     # result["error"] has a description
 else:
     account_name = result["accountName"]
@@ -326,11 +361,12 @@ get_transactions(account_id, from_date, to_date, limit=50, skip=0)
 get_transactions(account_id, from_date, to_date, limit=50, skip=50)
 ```
 
-When `count` in the result equals your `limit`, there may be more records.
+`count` is always the total number of matching records. More pages exist while `skip + len(data) < count`.
 
 | Tool | Default Limit | Max | Supports skip |
 |---|---|---|---|
 | list_accounts | 20 | 200 | yes |
+| list_securities | 50 | 200 | yes |
 | get_transactions | 50 | 200 | yes |
 | get_positions | 200 | 200 | yes |
 | get_position_history | 200 | 200 | yes |
@@ -344,7 +380,7 @@ When `count` in the result equals your `limit`, there may be more records.
 
 - **No mutations.** Read-only ODS view — no create, update, or delete tools.
 - **No cross-account aggregation.** No "all accounts" summary; iterate `list_accounts` if needed.
-- **No security master search.** Security data is embedded in position and transaction results.
+- **No free-text security search.** `list_securities` filters by asset class/ticker/status only.
 - **No real-time prices.** All prices are EOD snapshots from seed data.
 - **No authentication.** Connects to a local MongoDB instance with no credentials.
 

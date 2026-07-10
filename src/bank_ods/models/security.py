@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import ClassVar, Literal, Optional
 
 from .base import BankDocument, IndexSpec
@@ -27,7 +28,7 @@ class Security(BankDocument):
     issuer: str
     country: str
     maturityDate: Optional[datetime] = None
-    couponRate: Optional[float] = None
+    couponRate: Optional[Decimal] = None
     status: Literal["ACTIVE", "MATURED", "DELISTED"]
     createdAt: datetime
     updatedAt: datetime

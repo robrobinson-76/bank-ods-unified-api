@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import ClassVar, Literal, Optional
 
 from .base import BankDocument, IndexSpec
@@ -29,9 +30,9 @@ class Settlement(BankDocument):
     securityId: Optional[str] = None
     settlementDate: datetime
     deliveryType: Literal["DVP", "FOP", "RVP", "RFP"]
-    quantity: Optional[float] = None
+    quantity: Optional[Decimal] = None
     currency: str
-    settlementAmount: float
+    settlementAmount: Decimal
     counterpartyId: str
     counterpartyAccount: str
     custodianAccount: str

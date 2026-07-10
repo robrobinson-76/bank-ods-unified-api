@@ -2,8 +2,10 @@ from contextlib import asynccontextmanager
 
 from ariadne import ScalarType, make_executable_schema
 from ariadne.asgi import GraphQL
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from graphql.validation import NoSchemaIntrospectionCustomRule
+
+from bank_ods.db.client import get_db
 
 from bank_ods.config import (
     DEBUG,
@@ -19,10 +21,17 @@ from bank_ods.graphql.resolvers import query
 from bank_ods.logging_config import RequestLoggingMiddleware, configure_logging
 
 datetime_scalar = ScalarType("DateTime")
+decimal_scalar = ScalarType("Decimal")
 
 
 @datetime_scalar.serializer
 def serialize_datetime(value):
+    return value if isinstance(value, str) else str(value)
+
+
+@decimal_scalar.serializer
+def serialize_decimal(value):
+    # Service layer already serializes Decimal128/Decimal to exact strings
     return value if isinstance(value, str) else str(value)
 
 
@@ -35,7 +44,7 @@ async def lifespan(_app: FastAPI):
 
 def _build_graphql_app() -> GraphQL:
     type_defs = generate_sdl()
-    schema = make_executable_schema(type_defs, query, datetime_scalar)
+    schema = make_executable_schema(type_defs, query, datetime_scalar, decimal_scalar)
     validation_rules = [
         depth_limit_rule(GRAPHQL_MAX_DEPTH),
         root_fields_limit_rule(GRAPHQL_MAX_ROOT_FIELDS),
@@ -54,7 +63,17 @@ def create_app() -> FastAPI:
 
     @fast.get("/health", tags=["ops"])
     async def health():
+        """Liveness: the process is up."""
         return {"status": "ok"}
+
+    @fast.get("/ready", tags=["ops"])
+    async def ready():
+        """Readiness: MongoDB is reachable. K8s readiness probes point here."""
+        try:
+            await get_db().command("ping")
+            return {"status": "ready"}
+        except Exception:
+            raise HTTPException(status_code=503, detail="MongoDB unreachable")
 
     @fast.get("/")
     async def root():

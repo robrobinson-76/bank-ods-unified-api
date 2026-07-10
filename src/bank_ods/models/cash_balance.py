@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import ClassVar, Literal
 
 from .base import BankDocument, IndexSpec
@@ -17,13 +18,13 @@ class CashBalance(BankDocument):
     accountId: str
     currency: str
     asOfDate: datetime
-    openingBalance: float
-    credits: float
-    debits: float
-    closingBalance: float
-    pendingCredits: float
-    pendingDebits: float
-    projectedBalance: float
+    openingBalance: Decimal
+    credits: Decimal
+    debits: Decimal
+    closingBalance: Decimal
+    pendingCredits: Decimal
+    pendingDebits: Decimal
+    projectedBalance: Decimal
     snapshotType: Literal["EOD", "INTRADAY"]
     createdAt: datetime
     updatedAt: datetime

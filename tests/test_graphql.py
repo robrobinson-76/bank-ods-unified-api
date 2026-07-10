@@ -34,7 +34,7 @@ async def test_gql_list_accounts_skip(gql_client):
     assert "errors" not in skipped
     total = full["data"]["list_accounts"]["count"]
     if total > 1:
-        assert skipped["data"]["list_accounts"]["count"] == total - 1
+        assert skipped["data"]["list_accounts"]["count"] == total
         assert (
             skipped["data"]["list_accounts"]["data"][0]["accountId"]
             == full["data"]["list_accounts"]["data"][1]["accountId"]
@@ -79,8 +79,7 @@ async def test_gql_get_transactions_skip(gql_client, first_account):
     assert "errors" not in skipped
     total = full["data"]["get_transactions"]["count"]
     if total > 1:
-        if total < 200:
-            assert skipped["data"]["get_transactions"]["count"] == total - 1
+        assert skipped["data"]["get_transactions"]["count"] == total
         assert (
             skipped["data"]["get_transactions"]["data"][0]["transactionId"]
             == full["data"]["get_transactions"]["data"][1]["transactionId"]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import ClassVar, Literal
 
 from .base import BankDocument, IndexSpec
@@ -18,12 +19,12 @@ class Position(BankDocument):
     accountId: str
     securityId: str
     asOfDate: datetime
-    quantity: float
+    quantity: Decimal
     currency: str
-    costBasis: float
-    marketPrice: float
-    marketValue: float
-    unrealizedPnL: float
+    costBasis: Decimal
+    marketPrice: Decimal
+    marketValue: Decimal
+    unrealizedPnL: Decimal
     positionType: Literal["LONG", "SHORT"]
     snapshotType: Literal["EOD", "INTRADAY", "SETTLEMENT"]
     createdAt: datetime

@@ -41,13 +41,14 @@ async def test_list_accounts_by_status():
 
 
 async def test_list_accounts_skip():
-    """skip=1 returns one fewer account than skip=0; first items offset by 1."""
+    """count is the total (unchanged by skip); the data page is offset by 1."""
     full = await svc_accounts.list_accounts(limit=50, skip=0)
     skipped = await svc_accounts.list_accounts(limit=50, skip=1)
     assert "error" not in full
     assert "error" not in skipped
     if full["count"] > 1:
-        assert skipped["count"] == full["count"] - 1
+        assert skipped["count"] == full["count"]
+        assert len(skipped["data"]) == len(full["data"]) - 1
         assert skipped["data"][0]["accountId"] == full["data"][1]["accountId"]
 
 
@@ -89,9 +90,8 @@ async def test_get_transactions_skip(first_account):
     assert "error" not in full
     assert "error" not in skipped
     if full["count"] > 1:
-        # Count drops by 1 only when the full result is below the page cap
-        if full["count"] < 200:
-            assert skipped["count"] == full["count"] - 1
+        # count is the total number of matching documents — skip never changes it
+        assert skipped["count"] == full["count"]
         assert skipped["data"][0]["transactionId"] == full["data"][1]["transactionId"]
 
 
@@ -119,7 +119,7 @@ async def test_get_positions(db, first_account):
 
 
 async def test_get_positions_skip(db, first_account):
-    """skip reduces result count and offsets correctly."""
+    """count is the total (unchanged by skip); the data page shrinks by 1."""
     pos_doc = await db.positions.find_one({"accountId": first_account["accountId"]}, {"_id": 0})
     if pos_doc is None:
         pytest.skip("No positions for this account")
@@ -129,7 +129,8 @@ async def test_get_positions_skip(db, first_account):
     assert "error" not in full
     assert "error" not in skipped
     if full["count"] > 1:
-        assert skipped["count"] == full["count"] - 1
+        assert skipped["count"] == full["count"]
+        assert len(skipped["data"]) == len(full["data"]) - 1
 
 
 # ── Settlements ───────────────────────────────────────────────────────────────
@@ -144,13 +145,14 @@ async def test_get_settlement_fails():
 
 
 async def test_get_settlement_fails_skip():
-    """skip reduces the fail count when there are at least 2 fails."""
+    """count is the total (unchanged by skip); the data page is offset by 1."""
     full = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01", skip=0)
     skipped = await svc_settlements.get_settlement_fails("2020-01-01", "2030-01-01", skip=1)
     assert "error" not in full
     assert "error" not in skipped
     if full["count"] > 1:
-        assert skipped["count"] == full["count"] - 1
+        assert skipped["count"] == full["count"]
+        assert skipped["data"][0]["settlementId"] == full["data"][1]["settlementId"]
 
 
 async def test_get_settlement_status(db, first_settled_txn):
@@ -184,14 +186,15 @@ async def test_get_cash_balances(first_balance):
 
 
 async def test_get_cash_balances_skip(first_balance):
-    """skip reduces balance count when at least 2 currencies exist for the account/date."""
+    """count is the total (unchanged by skip); the data page shrinks by 1."""
     as_of = first_balance["asOfDate"].strftime("%Y-%m-%d")
     full = await svc_balances.get_cash_balances(first_balance["accountId"], as_of, skip=0)
     skipped = await svc_balances.get_cash_balances(first_balance["accountId"], as_of, skip=1)
     assert "error" not in full
     assert "error" not in skipped
     if full["count"] > 1:
-        assert skipped["count"] == full["count"] - 1
+        assert skipped["count"] == full["count"]
+        assert len(skipped["data"]) == len(full["data"]) - 1
 
 
 async def test_get_projected_balance(first_balance):

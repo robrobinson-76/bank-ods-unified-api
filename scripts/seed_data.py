@@ -2,7 +2,9 @@
 import os
 import random
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
+from bson.decimal128 import Decimal128
 from dotenv import load_dotenv
 from faker import Faker
 import pymongo
@@ -398,6 +400,32 @@ def build_cash_balances(accounts: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Decimal128 conversion — monetary/quantity/rate fields are stored as
+# MongoDB Decimal128 (exact precision), never as IEEE-754 doubles.
+# ---------------------------------------------------------------------------
+
+DECIMAL_FIELDS: dict[str, set[str]] = {
+    "securities": {"couponRate"},
+    "transactions": {"quantity", "price", "grossAmount", "fees", "netAmount", "fxRate"},
+    "settlements": {"quantity", "settlementAmount"},
+    "positions": {"quantity", "costBasis", "marketPrice", "marketValue", "unrealizedPnL"},
+    "cash_balances": {
+        "openingBalance", "credits", "debits", "closingBalance",
+        "pendingCredits", "pendingDebits", "projectedBalance",
+    },
+}
+
+
+def convert_decimals(docs: list[dict], fields: set[str]) -> list[dict]:
+    for d in docs:
+        for f in fields:
+            v = d.get(f)
+            if v is not None:
+                d[f] = Decimal128(Decimal(str(v)))
+    return docs
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -428,6 +456,7 @@ def main() -> None:
     ]
 
     for name, docs in collections:
+        convert_decimals(docs, DECIMAL_FIELDS.get(name, set()))
         db[name].drop()
         db[name].insert_many(docs)
         print(f"Inserted {len(docs)} {name}")

@@ -37,14 +37,14 @@ async def test_rest_list_accounts(rest_client):
 
 
 async def test_rest_list_accounts_skip(rest_client):
-    """skip=1 should return one fewer record than skip=0 when total > 1."""
+    """count is the total (unchanged by skip); the data page is offset by 1."""
     all_resp = await rest_client.get("/accounts", params={"limit": 50, "skip": 0})
     skip_resp = await rest_client.get("/accounts", params={"limit": 50, "skip": 1})
     assert all_resp.status_code == 200
     assert skip_resp.status_code == 200
     total = all_resp.json()["count"]
     if total > 1:
-        assert skip_resp.json()["count"] == total - 1
+        assert skip_resp.json()["count"] == total
         # First item of skipped page should match second item of full page
         assert skip_resp.json()["data"][0]["accountId"] == all_resp.json()["data"][1]["accountId"]
 
@@ -86,8 +86,7 @@ async def test_rest_get_transactions_skip(rest_client, first_account):
     assert skip_resp.status_code == 200
     total = all_resp.json()["count"]
     if total > 1:
-        if total < 200:
-            assert skip_resp.json()["count"] == total - 1
+        assert skip_resp.json()["count"] == total
         assert (
             skip_resp.json()["data"][0]["transactionId"]
             == all_resp.json()["data"][1]["transactionId"]

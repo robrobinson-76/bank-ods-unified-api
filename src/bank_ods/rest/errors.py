@@ -3,10 +3,15 @@ from typing import Any
 from fastapi import HTTPException
 
 
+_STATUS_BY_CODE = {
+    "NOT_FOUND": 404,
+    "INVALID_DATE": 400,
+}
+
+
 def check(result: dict[str, Any]) -> dict[str, Any]:
     """Raise HTTPException for service-layer error envelopes."""
     if "error" not in result:
         return result
-    code = result.get("code", "")
-    status = 404 if code == "NOT_FOUND" else 500
+    status = _STATUS_BY_CODE.get(result.get("code", ""), 500)
     raise HTTPException(status_code=status, detail=result["error"])

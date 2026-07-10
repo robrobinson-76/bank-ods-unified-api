@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, ClassVar
 
 from bson import ObjectId
-from pydantic import BaseModel, ConfigDict
+from bson.decimal128 import Decimal128
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 # IndexSpec: (keys, options) where keys is a field name string or list of (field, direction) tuples
@@ -27,6 +29,14 @@ class BankDocument(BaseModel):
     COLLECTION: ClassVar[str]
     INDEXES: ClassVar[list[IndexSpec]]
 
+    @field_validator("*", mode="before")
+    @classmethod
+    def _decimal128_to_decimal(cls, v: Any) -> Any:
+        """Accept raw BSON Decimal128 values when validating Mongo documents."""
+        if isinstance(v, Decimal128):
+            return v.to_decimal()
+        return v
+
     @classmethod
     def from_mongo(cls, doc: dict) -> "BankDocument":
         """Construct a model instance from a raw MongoDB document."""
@@ -46,7 +56,11 @@ def _serialize(obj: Any) -> Any:
     if isinstance(obj, ObjectId):
         return str(obj)
     if isinstance(obj, datetime):
+        if obj.tzinfo is None:
+            obj = obj.replace(tzinfo=timezone.utc)
         return obj.isoformat()
+    if isinstance(obj, (Decimal, Decimal128)):
+        return str(obj)
     return obj
 
 

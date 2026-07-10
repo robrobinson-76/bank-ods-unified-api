@@ -1,4 +1,5 @@
 scalar DateTime
+scalar Decimal
 
 type StatusHistoryEntry {
   status: String!
@@ -38,7 +39,7 @@ type Security {
   issuer: String!
   country: String!
   maturityDate: DateTime
-  couponRate: Float
+  couponRate: Decimal
   status: String!
   createdAt: DateTime!
   updatedAt: DateTime!
@@ -56,13 +57,13 @@ type Transaction {
   settlementDate: DateTime!
   accountId: String!
   securityId: String
-  quantity: Float
-  price: Float
+  quantity: Decimal
+  price: Decimal
   currency: String!
-  grossAmount: Float!
-  fees: Float!
-  netAmount: Float!
-  fxRate: Float!
+  grossAmount: Decimal!
+  fees: Decimal!
+  netAmount: Decimal!
+  fxRate: Decimal!
   counterpartyId: String!
   status: String!
   settlementRef: String
@@ -82,12 +83,12 @@ type Position {
   accountId: String!
   securityId: String!
   asOfDate: DateTime!
-  quantity: Float!
+  quantity: Decimal!
   currency: String!
-  costBasis: Float!
-  marketPrice: Float!
-  marketValue: Float!
-  unrealizedPnL: Float!
+  costBasis: Decimal!
+  marketPrice: Decimal!
+  marketValue: Decimal!
+  unrealizedPnL: Decimal!
   positionType: String!
   snapshotType: String!
   createdAt: DateTime!
@@ -106,9 +107,9 @@ type Settlement {
   securityId: String
   settlementDate: DateTime!
   deliveryType: String!
-  quantity: Float
+  quantity: Decimal
   currency: String!
-  settlementAmount: Float!
+  settlementAmount: Decimal!
   counterpartyId: String!
   counterpartyAccount: String!
   custodianAccount: String!
@@ -131,13 +132,13 @@ type CashBalance {
   accountId: String!
   currency: String!
   asOfDate: DateTime!
-  openingBalance: Float!
-  credits: Float!
-  debits: Float!
-  closingBalance: Float!
-  pendingCredits: Float!
-  pendingDebits: Float!
-  projectedBalance: Float!
+  openingBalance: Decimal!
+  credits: Decimal!
+  debits: Decimal!
+  closingBalance: Decimal!
+  pendingCredits: Decimal!
+  pendingDebits: Decimal!
+  projectedBalance: Decimal!
   snapshotType: String!
   createdAt: DateTime!
   updatedAt: DateTime!
@@ -153,7 +154,7 @@ type TransactionSummaryItem {
   transactionType: String!
   status: String!
   count: Int!
-  totalNetAmount: Float!
+  totalNetAmount: Decimal!
 }
 
 type TransactionSummaryList {
@@ -165,10 +166,10 @@ type ProjectedBalance {
   accountId: String!
   currency: String!
   asOfDate: String!
-  closingBalance: Float
-  pendingCredits: Float
-  pendingDebits: Float
-  projectedBalance: Float
+  closingBalance: Decimal
+  pendingCredits: Decimal
+  pendingDebits: Decimal
+  projectedBalance: Decimal
 }
 
 
@@ -176,6 +177,10 @@ type Query {
   # Accounts
   get_account(accountId: String!): Account
   list_accounts(clientId: String, status: String, limit: Int, skip: Int): AccountList!
+
+  # Securities
+  get_security(securityId: String!): Security
+  list_securities(assetClass: String, ticker: String, status: String, limit: Int, skip: Int): SecurityList!
 
   # Transactions
   get_transaction(transactionId: String!): Transaction

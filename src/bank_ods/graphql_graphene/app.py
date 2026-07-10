@@ -12,18 +12,16 @@ stale dependency.
 from contextlib import asynccontextmanager
 
 import graphene
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from bank_ods.config import LOG_LEVEL
+from bank_ods.db.client import get_db
 from bank_ods.db.indexes import ensure_indexes
 from bank_ods.graphql_graphene.resolvers import Query
-from bank_ods.graphql_graphene.types import SecurityType, SecurityList
 from bank_ods.logging_config import RequestLoggingMiddleware, configure_logging
 
-# Security/SecurityList are unreferenced by Query fields; force-include them to
-# match the Ariadne schema, which emits every ENTITIES model.
-schema = graphene.Schema(query=Query, auto_camelcase=False, types=[SecurityType, SecurityList])
+schema = graphene.Schema(query=Query, auto_camelcase=False)
 
 
 @asynccontextmanager
@@ -55,6 +53,14 @@ def create_app() -> FastAPI:
     @fast.get("/health", tags=["ops"])
     async def health():
         return {"status": "ok"}
+
+    @fast.get("/ready", tags=["ops"])
+    async def ready():
+        try:
+            await get_db().command("ping")
+            return {"status": "ready"}
+        except Exception:
+            raise HTTPException(status_code=503, detail="MongoDB unreachable")
 
     @fast.get("/")
     async def root():
