@@ -16,6 +16,7 @@ class Transaction(BankDocument):
         ("settlementDate", {}),
         ("securityId", {}),
     ]
+    ID_FIELD: ClassVar[str] = "transactionId"
 
     transactionId: str
     transactionType: Literal["BUY", "SELL", "DEPOSIT", "WITHDRAWAL", "TRANSFER_IN", "TRANSFER_OUT", "DIVIDEND", "FX"]

@@ -34,6 +34,34 @@ def date_window(from_date: str, to_date: str) -> dict:
     return {"$gte": day_start(from_date), "$lt": day_after(to_date)}
 
 
+# ── Custody-feed identifier conversions ───────────────────────────────────────
+# The mainframe custody feed keys accounts by a zero-filled 12-char number and
+# carries CUSIPs embedded in US/CA ISINs. The seed loader needs the forward
+# mapping and the reconciliation tool the reverse; keeping both here makes the
+# feed's conventions a single source of truth (change once, not per-caller).
+
+def custody_acct_nbr(account_id: str) -> str:
+    """Semantic accountId (ACC-000007) -> zero-filled 12-char custody key."""
+    return f"{int(account_id.removeprefix('ACC-')):012d}"
+
+
+def account_id_from_custody(acct_nbr: str) -> str | None:
+    """Custody key (000000000007) -> accountId (ACC-000007), or None when the
+    raw value isn't the expected numeric form — i.e. a malformed feed record,
+    which the reconciler classifies rather than crashing on."""
+    try:
+        return f"ACC-{int(acct_nbr):06d}"
+    except (ValueError, TypeError):
+        return None
+
+
+def cusip_from_isin(isin: str | None) -> str | None:
+    """The 9-char CUSIP embedded in a US/CA ISIN (positions 3-11), else None."""
+    if isin and isin[:2] in ("US", "CA"):
+        return isin[2:11]
+    return None
+
+
 def serialize_doc(doc: dict) -> dict:
     return _serialize({k: v for k, v in doc.items() if k != "_id"})
 

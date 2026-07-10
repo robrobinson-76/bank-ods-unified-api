@@ -1,10 +1,12 @@
 from .account import Account, ClientMaster
-from .security import Listing, Security
-from .transaction import Transaction
-from .position import Position
-from .settlement import Settlement, StatusHistoryEntry
 from .cash_balance import CashBalance
-from .registry import ENTITIES
+from .position import Position
+from .raw_custody_position import RawCustodyPosition
+from .raw_vendor_security import RawVendorSecurity
+from .registry import ENTITIES, ENTITIES_RAW, ENTITIES_SEMANTIC, active_entities
+from .security import Listing, Security
+from .settlement import Settlement, StatusHistoryEntry
+from .transaction import Transaction
 
 __all__ = [
     "Account",
@@ -16,5 +18,10 @@ __all__ = [
     "Settlement",
     "StatusHistoryEntry",
     "CashBalance",
+    "RawCustodyPosition",
+    "RawVendorSecurity",
     "ENTITIES",
+    "ENTITIES_SEMANTIC",
+    "ENTITIES_RAW",
+    "active_entities",
 ]

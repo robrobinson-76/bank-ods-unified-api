@@ -13,6 +13,7 @@ from bank_ods.config import (
     GRAPHQL_MAX_DEPTH,
     GRAPHQL_MAX_ROOT_FIELDS,
     LOG_LEVEL,
+    TRANSPORT_GRAPHQL_ENABLED,
 )
 from bank_ods.db.indexes import ensure_indexes
 from bank_ods.graphql.protection import depth_limit_rule, root_fields_limit_rule
@@ -37,6 +38,10 @@ def serialize_decimal(value):
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    if not TRANSPORT_GRAPHQL_ENABLED:
+        raise RuntimeError(
+            "GraphQL transport is disabled (TRANSPORT_GRAPHQL_ENABLED=false)"
+        )
     configure_logging(LOG_LEVEL)
     await ensure_indexes()
     yield

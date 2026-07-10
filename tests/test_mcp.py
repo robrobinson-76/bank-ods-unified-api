@@ -13,6 +13,8 @@ from bank_ods.mcp.server import mcp
 
 pytestmark = pytest.mark.asyncio
 
+# Consumer persona: semantic domain tools only. Raw feed inspection and
+# operational tooling live on bank-ods-ops (see test_mcp_ops.py).
 EXPECTED_TOOLS = {
     "get_account", "list_accounts",
     "get_security", "get_security_by_sedol", "list_securities",
@@ -23,13 +25,7 @@ EXPECTED_TOOLS = {
 }
 
 
-def _payload(result):
-    """Extract the dict payload from a fastmcp CallToolResult."""
-    data = getattr(result, "data", None)
-    if isinstance(data, dict):
-        return data
-    import json
-    return json.loads(result.content[0].text)
+from tests.conftest import mcp_payload as _payload
 
 
 async def test_mcp_tool_surface():

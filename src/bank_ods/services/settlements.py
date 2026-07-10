@@ -1,37 +1,16 @@
-import logging
-
-import pymongo.errors
-from bank_ods.db.client import get_collection
-from bank_ods.services._common import date_window, day_range, serialize_doc
-from bank_ods.services.pagination import DEFAULT_LIMIT, InvalidCursorError, paginate
-
-logger = logging.getLogger("bank_ods.services")
+from bank_ods.services._common import date_window, day_range
+from bank_ods.services.generic import get_many, get_one
+from bank_ods.services.pagination import DEFAULT_LIMIT
 
 
 async def get_settlement(settlement_id: str) -> dict:
     """Fetch a settlement instruction by its settlement ID."""
-    try:
-        col = get_collection("settlements")
-        doc = await col.find_one({"settlementId": settlement_id}, {"_id": 0})
-        if doc is None:
-            return {"error": "Not found", "code": "NOT_FOUND"}
-        return serialize_doc(doc)
-    except pymongo.errors.PyMongoError:
-        logger.exception("MongoDB error in get_settlement")
-        return {"error": "Database error", "code": "MONGO_ERROR"}
+    return await get_one("settlements", {"settlementId": settlement_id})
 
 
 async def get_settlement_status(transaction_id: str) -> dict:
     """Look up the settlement linked to a transaction ID."""
-    try:
-        col = get_collection("settlements")
-        doc = await col.find_one({"transactionId": transaction_id}, {"_id": 0})
-        if doc is None:
-            return {"error": "Not found", "code": "NOT_FOUND"}
-        return serialize_doc(doc)
-    except pymongo.errors.PyMongoError:
-        logger.exception("MongoDB error in get_settlement_status")
-        return {"error": "Database error", "code": "MONGO_ERROR"}
+    return await get_one("settlements", {"transactionId": transaction_id})
 
 
 async def get_settlements(
@@ -47,21 +26,15 @@ async def get_settlements(
     back as cursor to fetch the next page.
     """
     try:
-        col = get_collection("settlements")
         query: dict = {
             "accountId": account_id,
             "settlementDate": day_range(settlement_date),
         }
-        if status:
-            query["status"] = status
-        return await paginate(col, query, [("settlementId", 1)], limit, cursor)
-    except InvalidCursorError as e:
-        return {"error": str(e), "code": "INVALID_CURSOR"}
     except ValueError as e:
         return {"error": f"Invalid date: {e}", "code": "INVALID_DATE"}
-    except pymongo.errors.PyMongoError:
-        logger.exception("MongoDB error in get_settlements")
-        return {"error": "Database error", "code": "MONGO_ERROR"}
+    if status:
+        query["status"] = status
+    return await get_many("settlements", query, [("settlementId", 1)], limit, cursor)
 
 
 async def get_settlement_fails(
@@ -77,18 +50,12 @@ async def get_settlement_fails(
     back as cursor to fetch the next page.
     """
     try:
-        col = get_collection("settlements")
         query: dict = {
             "status": "FAILED",
             "settlementDate": date_window(from_date, to_date),
         }
-        if account_id:
-            query["accountId"] = account_id
-        return await paginate(col, query, [("settlementDate", -1)], limit, cursor)
-    except InvalidCursorError as e:
-        return {"error": str(e), "code": "INVALID_CURSOR"}
     except ValueError as e:
         return {"error": f"Invalid date: {e}", "code": "INVALID_DATE"}
-    except pymongo.errors.PyMongoError:
-        logger.exception("MongoDB error in get_settlement_fails")
-        return {"error": "Database error", "code": "MONGO_ERROR"}
+    if account_id:
+        query["accountId"] = account_id
+    return await get_many("settlements", query, [("settlementDate", -1)], limit, cursor)

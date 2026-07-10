@@ -27,7 +27,8 @@ This is a local development prototype, not a production system.
               ┌────────────▼────────────┐
               │     Service Layer       │
               │  bank_ods.services.*    │
-              │  18 async functions     │
+              │  entity + generic +     │
+              │  raw + ops helpers      │
               │  Single MongoDB access  │
               │  point for all layers   │
               └────────────┬────────────┘
@@ -52,36 +53,40 @@ This is a local development prototype, not a production system.
 ## System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                       Transport Layer                            │
-│                                                                  │
-│   ┌──────────────┐   ┌──────────────┐   ┌──────────────────┐   │
-│   │  MCP Server  │   │  REST API    │   │  GraphQL API     │   │
-│   │  (fastmcp)   │   │  (FastAPI)   │   │  (Ariadne)       │   │
-│   │  stdio/sse   │   │  port 8000   │   │  port 8001       │   │
-│   └──────┬───────┘   └──────┬───────┘   └────────┬─────────┘   │
-└──────────┼─────────────────┼───────────────────┼──────────────┘
-           │                 │                   │
-           └─────────────────┴───────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  Service Layer  │
-                    │  bank_ods.      │
-                    │  services.*     │
-                    │  (18 async fns) │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │  DB Layer       │
-                    │  motor (async)  │
-                    │  + index mgmt   │
-                    └────────┬────────┘
-                             │
-                    ┌────────▼────────┐
-                    │   MongoDB 7.0   │
-                    │   (Docker/K8s)  │
-                    │   6 collections │
-                    └─────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                             Transport Layer                                  │
+│                                                                              │
+│  consumer path (governed)                          internal-only            │
+│  ┌────────────┐ ┌────────────┐ ┌──────────────┐   ┌────────────────────┐   │
+│  │ MCP Server │ │  REST API  │ │ GraphQL API  │   │ Ops MCP Server     │   │
+│  │ bank-ods   │ │  (FastAPI) │ │ (Ariadne)    │   │ bank-ods-ops       │   │
+│  │ (fastmcp)  │ │  port 8000 │ │ port 8001    │   │ raw + ops tooling  │   │
+│  │ stdio/sse  │ │            │ │              │   │ stdio/internal sse │   │
+│  └─────┬──────┘ └─────┬──────┘ └──────┬───────┘   └─────────┬──────────┘   │
+└────────┼──────────────┼──────────────┼─────────────────────┼──────────────┘
+         │              │              │                     │
+         └──────────────┴──────────────┴─────────────────────┘
+                                │
+                       ┌────────▼────────┐
+                       │  Service Layer  │
+                       │  bank_ods.      │
+                       │  services.*     │
+                       │  entity + generic│
+                       │  + raw + ops    │
+                       └────────┬────────┘
+                                │
+                       ┌────────▼────────┐
+                       │  DB Layer       │
+                       │  motor (async)  │
+                       │  + index mgmt   │
+                       └────────┬────────┘
+                                │
+                       ┌────────▼────────┐
+                       │   MongoDB 7.0   │
+                       │  8 collections  │
+                       │  (6 semantic +  │
+                       │   2 raw tier)   │
+                       └─────────────────┘
 ```
 
 ---
@@ -129,36 +134,47 @@ mongo-mcp-test/
 │       ├── logging_config.py       ← JSON formatter, configure_logging(), RequestLoggingMiddleware
 │       │
 │       ├── models/                 ← Pydantic v2 entity models (single source of truth)
-│       │   ├── base.py             ← BankDocument, IndexSpec, serialize_doc
+│       │   ├── base.py             ← BankDocument, IndexSpec, access metadata (ID_FIELD, DEFAULT_SORT, UNFILTERED_LIST)
 │       │   ├── account.py
 │       │   ├── security.py
 │       │   ├── transaction.py
 │       │   ├── position.py
 │       │   ├── settlement.py
 │       │   ├── cash_balance.py
-│       │   └── registry.py         ← ENTITIES list — drives index creation + SDL generation
+│       │   ├── raw_custody_position.py ← raw tier: mainframe batch extract (copybook conventions)
+│       │   ├── raw_vendor_security.py  ← raw tier: as-received vendor reference feed
+│       │   └── registry.py         ← tiered registry: ENTITIES_SEMANTIC/RAW, active_entities(), operation-name derivation
 │       │
 │       ├── db/
-│       │   ├── client.py           ← Motor singleton with connection timeouts
-│       │   └── indexes.py          ← ensure_indexes() — idempotent, called on startup
+│       │   ├── client.py           ← Motor client per event loop, connection timeouts
+│       │   └── indexes.py          ← ensure_indexes() — idempotent, indexes every registered collection (ENTITIES)
 │       │
-│       ├── services/               ← 18 async business logic functions (only MongoDB access here)
+│       ├── services/               ← business logic (only MongoDB access here)
 │       │   ├── _common.py          ← date helpers (day_range/date_window), serialize_doc()
 │       │   ├── pagination.py       ← keyset cursor pagination: paginate(), cursor codec, seek predicate
-│       │   ├── accounts.py         ← get_account, list_accounts
+│       │   ├── generic.py          ← get_one/get_many — shared envelope + pagination base for every entity service
+│       │   ├── raw.py              ← raw-tier access driven purely by model metadata
+│       │   ├── ops.py              ← operational introspection: health, stats, recent docs, reconciliation, release checks
+│       │   ├── accounts.py         ← get_account, list_accounts (thin wrappers over generic)
 │       │   ├── securities.py       ← get_security, get_security_by_sedol, list_securities
 │       │   ├── transactions.py     ← get_transaction, get_transactions, get_transaction_summary
 │       │   ├── positions.py        ← get_position, get_positions, get_position_history
 │       │   ├── settlements.py      ← get_settlement, get_settlement_status, get_settlements, get_settlement_fails
 │       │   └── balances.py         ← get_cash_balance, get_cash_balances, get_projected_balance
 │       │
-│       ├── mcp/
+│       ├── mcp/                    ← consumer MCP server (semantic persona)
 │       │   ├── server.py           ← FastMCP("bank-ods"), lifespan → ensure_indexes()
 │       │   ├── tools.py            ← 18 @mcp.tool() wrappers; each delegates to services
-│       │   └── __main__.py         ← reads MCP_TRANSPORT env var; mcp.run(transport=...)
+│       │   ├── raw_tools.py        ← registry-generated raw tool group; registered on the OPS server
+│       │   └── __main__.py         ← TRANSPORT_MCP_ENABLED gate; MCP_TRANSPORT; mcp.run()
+│       │
+│       ├── mcp_ops/                ← operations MCP server (ops/debug persona, internal-only)
+│       │   ├── server.py           ← FastMCP("bank-ods-ops"); attaches log ring; registers raw group
+│       │   ├── tools.py            ← ping/list_collections/stats/query_recent/reconcile/logs/release checks
+│       │   └── __main__.py         ← TRANSPORT_MCP_OPS_ENABLED gate; MCP_TRANSPORT; mcp.run()
 │       │
 │       ├── rest/
-│       │   ├── app.py              ← FastAPI app, /health + /ready, RequestLoggingMiddleware, lifespan
+│       │   ├── app.py              ← FastAPI app, /health + /ready, tier-gated router mounting, lifespan
 │       │   ├── errors.py           ← check() — maps service error envelopes to HTTP 400/404/500
 │       │   └── routers/
 │       │       ├── accounts.py
@@ -166,12 +182,13 @@ mongo-mcp-test/
 │       │       ├── transactions.py
 │       │       ├── positions.py
 │       │       ├── settlements.py
-│       │       └── balances.py
+│       │       ├── balances.py
+│       │       └── raw.py          ← registry-generated raw routers (one per raw collection)
 │       │
 │       └── graphql/
 │           ├── app.py              ← Ariadne + FastAPI; /health; debug from env; logging middleware
-│           ├── sdl.py              ← Dynamic SDL generation from ENTITIES registry
-│           └── resolvers.py        ← 15 QueryType field resolvers → services
+│           ├── sdl.py              ← Dynamic SDL from active_entities(); raw query fields generated from metadata
+│           └── resolvers.py        ← semantic QueryType resolvers + registry-generated raw resolvers
 │
 ├── scripts/
 │   └── seed_data.py                ← Loads ~5,200 realistic documents using faker (seed=42)
@@ -182,7 +199,10 @@ mongo-mcp-test/
 │   ├── test_services.py            ← Direct service function tests (happy path, NOT_FOUND, filters, pagination)
 │   ├── test_rest.py                ← REST endpoint tests (status codes, response shapes, health, cursors)
 │   ├── test_graphql.py             ← GraphQL query validation (health, cursors)
-│   └── test_parity.py              ← Cross-layer equivalence: REST == GraphQL == service (incl. cursor strings)
+│   ├── test_parity.py              ← Entity-specific parity: REST == GraphQL == service (incl. cursor strings)
+│   ├── test_parity_registry.py     ← Registry-driven parity baseline (list/get/not-found per exposed entity)
+│   ├── test_mcp.py                 ← Consumer MCP surface + tool==service parity
+│   └── test_mcp_ops.py             ← Ops MCP surface, raw tool parity, operational tools, release checks
 │
 ├── pyproject.toml
 ├── .env.example
@@ -197,7 +217,7 @@ This is the mechanism that ties all three transports together. Models are define
 
 ### `BankDocument` Base Class
 
-All six entity models inherit from `BankDocument`:
+All entity models inherit from `BankDocument`:
 
 ```python
 class BankDocument(BaseModel):
@@ -211,14 +231,35 @@ class BankDocument(BaseModel):
 
 `IndexSpec = tuple[str | list[tuple[str, int]], dict[str, Any]]`
 
-### ENTITIES Registry
+### Tiered Entity Registry
 
-`bank_ods.models.registry.ENTITIES` is the single list of all six model classes. It is imported by:
+`bank_ods.models.registry` partitions entities into two tiers:
 
-- `db/indexes.py` → calls `ensure_indexes()` at startup, creating all indexes from each model's `INDEXES` class variable
-- `graphql/sdl.py` → introspects Pydantic field types to generate the full GraphQL SDL at startup
+- **Semantic tier** (`ENTITIES_SEMANTIC`) — the six curated models: normalized camelCase fields, typed values, entity-specific service functions with filter parameters.
+- **Raw tier** (`ENTITIES_RAW`) — as-received feed records loaded verbatim: `RawCustodyPosition` (fixed-width mainframe batch extract; copybook field names, zoned-decimal values, julian dates) and `RawVendorSecurity` (third-party reference feed with its natural inconsistencies).
 
-Adding a new entity only requires adding it to this list. Indexes and GraphQL schema update automatically.
+`active_entities()` applies the `EXPOSE_SEMANTIC_TIER` / `EXPOSE_RAW_TIER` config flags and is what the **consumer** surfaces iterate:
+
+- `graphql/sdl.py` → generates type blocks and list wrappers for every active entity, plus get/list query fields for raw entities from their access metadata
+- `rest/routers/raw.py` → builds a REST router per raw entity, mounted at `/<collection>` (only when the raw tier is active)
+- `tests/test_parity_registry.py` → parametrizes baseline cross-transport parity over the exposed entities
+
+Two things deliberately iterate the full `ENTITIES` list, independent of the tier flags:
+
+- `db/indexes.py` → `ensure_indexes()` creates indexes for every registered collection — indexes track the physical collections (which the loader always writes), not what a deployment exposes; gating them would leave written-and-queried collections unindexed
+- `mcp_ops/server.py` → the operations MCP server always registers the raw tool group (`mcp/raw_tools.py`) and its operational tools read every registered collection — raw feed inspection is that server's purpose
+
+Models carry access metadata as class variables: `ID_FIELD` (natural key for get-by-id), `DEFAULT_SORT` (stable unfiltered listing order), and `UNFILTERED_LIST` (whether listing without filters is supported). Operation names derive from one place — `get_field_name()` / `list_field_name()` — so the same entity carries the same names in SDL, MCP, REST, and tests.
+
+Adding a raw entity only requires adding the model to `ENTITIES_RAW` and seeding it: indexes, SDL fields, resolvers, REST routes, MCP tools, and baseline parity tests all pick it up automatically. Semantic entities keep curated query surfaces (filter arguments, composite keys) in their per-entity service/transport modules.
+
+### Generic Service Base
+
+`services/generic.py` provides `get_one(collection, query)` and `get_many(collection, query, sort, limit, cursor)` — the shared mechanics (error envelopes, serialization, keyset pagination) that every entity service is a thin typed wrapper over. `services/raw.py` drives raw-tier access purely from model metadata. Query construction never leaves `bank_ods/services/`.
+
+### Transport & Tier Feature Flags
+
+Each transport checks its enable flag at startup and refuses to serve when disabled (`TRANSPORT_REST_ENABLED`, `TRANSPORT_GRAPHQL_ENABLED`, `TRANSPORT_MCP_ENABLED` for the consumer MCP server, `TRANSPORT_MCP_OPS_ENABLED` for the operations MCP server). The tier flags govern the **consumer** surfaces: `EXPOSE_SEMANTIC_TIER` gates the semantic MCP tool group / SDL fields / REST routers, `EXPOSE_RAW_TIER` gates the raw ones — a consumer deployment that withholds a tier never advertises its tools or fields. To keep SDL and resolvers in sync, both GraphQL tiers' resolver registration is gated the same way the SDL fields are (a tier-off deployment that left both flags false would have no query fields, so GraphQL refuses to build with a clear error rather than emitting invalid SDL). The operations server is exempt: it always exposes the raw tier because inspecting the raw feed is its reason to exist. The persona split is a *server* boundary (see MCP dual-persona design); the tier flags work *within* the consumer surfaces. Everything is on by default in dev; the flags are the interim access control — a per-caller permission model can later map onto the same grouping without reshaping the servers.
 
 ### Automatic SDL Generation
 
@@ -241,7 +282,7 @@ This ensures the GraphQL schema is always consistent with the Python models. Sch
 
 ## Domain Model
 
-Six MongoDB collections model a simplified custodian bank ODS. All field names are camelCase. Dates are stored as MongoDB `Date` objects and serialized to ISO 8601 strings at the service boundary.
+Eight MongoDB collections model a simplified custodian bank ODS: six semantic-tier collections (camelCase fields; dates stored as MongoDB `Date` objects and serialized to ISO 8601 strings at the service boundary) plus two raw-tier collections (`raw_custody_positions`, `raw_vendor_securities`) that keep their source feeds' field names and wire-format string values verbatim — see the model docstrings in `bank_ods/models/raw_*.py` for the field conventions.
 
 ### Collections
 
@@ -549,14 +590,35 @@ The implementation is a single shared helper, `services/pagination.py`:
 
 Each transport is a thin adapter. It receives a protocol-specific request, calls the appropriate service function, and translates the result to the protocol's response format. No transport contains business logic or database queries.
 
-### MCP — `bank_ods.mcp`
+### MCP dual-persona design — `bank_ods.mcp` and `bank_ods.mcp_ops`
 
-- Server ID: `bank-ods`
-- Transport: controlled by `MCP_TRANSPORT` env var (`stdio` default; `sse` for chatbot/K8s)
-- Entry point: `python -m bank_ods.mcp`
-- Tools: 18 `@mcp.tool()` functions in `tools.py`, each a single-line delegate to services
-- Startup: `ensure_indexes()` via lifespan context manager
-- Tool docstrings are LLM-visible tool descriptions
+The MCP surface splits into two servers with different audiences, tool sets, and security postures. The split is deliberate: feature flags decide *what data* a surface exposes, but the two personas need *different tools*, a different trust boundary, and independent release cadences — that is a server boundary, not a flag.
+
+**Consumer MCP — `bank-ods` (semantic persona)**
+
+- Audience: AI agents, chatbot integrations, downstream application teams
+- Entry point: `python -m bank_ods.mcp` (gated by `TRANSPORT_MCP_ENABLED`)
+- Tools: 18 `@mcp.tool()` functions in `mcp/tools.py`, clean domain queries over semantic collections, each a single-line delegate to services
+- Security: read-only, no raw feeds, no operational internals; productionized alongside REST and GraphQL in the same governance cycle
+
+**Operations MCP — `bank-ods-ops` (ops/debug persona)**
+
+- Audience: engineers debugging feed issues, QA, platform/support teams, and release-monitoring agents
+- Entry point: `python -m bank_ods.mcp_ops` (gated by `TRANSPORT_MCP_OPS_ENABLED`)
+- Security: internal-only by intent — deploy behind the platform boundary (stdio locally, internal SSE for ops tooling), never on the consumer path; releasable earlier and on its own cadence
+- Tools (all read-only; Mongo logic in `services/ops.py`):
+  - `ping_database` — reachability, server version, uptime, connections
+  - `list_collections` — every registered collection with tier, count, last insert time
+  - `get_collection_stats(collection)` — count, sizes, index inventory (registry-scoped names only)
+  - `query_recent(collection, limit)` — newest documents with `_insertedAt` (from ObjectId)
+  - `find_raw_records(collection, field, value)` — exact-match search over a raw collection by any feed field ("show me the raw records for account X"); field names validated against the model, raw-tier collections only
+  - `reconcile_custody_feed(cycle_date?)` — traces a raw batch cycle into curated positions; classifies every unmatched record as UNKNOWN_ACCOUNT / UNKNOWN_SECURITY / NO_CURATED_POSITION ("why didn't this record appear?")
+  - `get_recent_logs(level, limit)` — in-process log ring buffer (`logging_config.RingBufferHandler`); process-local by design, the platform log aggregator owns cross-process search
+  - `run_release_checks` — composite PASS/WARN/FAIL rollup (reachability, population, feed freshness, reconciliation) designed for an AI agent monitoring a release to poll until PASS
+  - Plus the registry-generated raw tool group (`get_raw_custody_position`, `list_raw_custody_positions`, `get_raw_vendor_security`, `list_raw_vendor_securities`), always registered here — raw feed inspection is an engineering activity, not a consumer one, so it is not subject to `EXPOSE_RAW_TIER` (which governs the consumer transports)
+  - Full ops tool surface: 8 operational tools + 4 raw tools = 12
+
+Both servers share the same service layer; the ops server adds operational tools that have no consumer equivalent. Transport for both: `MCP_TRANSPORT` env var (`stdio` default; `sse` for K8s). Startup: `ensure_indexes()` via lifespan; the ops server also attaches the log ring.
 
 ### REST — `bank_ods.rest`
 
@@ -565,7 +627,7 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Docs: `http://localhost:8000/docs` (Swagger UI)
 - Health: `GET /health` (liveness) → `{"status": "ok"}`; `GET /ready` (readiness, pings MongoDB) → `{"status": "ready"}` or 503
 - Error mapping: HTTP 400 (INVALID_DATE, INVALID_CURSOR), 404 (NOT_FOUND), 500 (MONGO_ERROR) via `rest/errors.py check()`
-- 6 routers: accounts, securities, transactions, positions, settlements, balances
+- 6 hand-written semantic routers (accounts, securities, transactions, positions, settlements, balances) plus registry-generated raw routers (`rest/routers/raw.py`, mounted per raw collection when `EXPOSE_RAW_TIER` is on)
 
 **Endpoint summary:**
 
@@ -577,6 +639,8 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 | `/positions` | GET `/{account_id}?as_of_date&limit&cursor`, GET `/{account_id}/{security_id}?as_of_date`, GET `/{account_id}/{security_id}/history?from_date&to_date&limit&cursor` |
 | `/settlements` | GET `/{id}`, GET `/by-transaction/{txn_id}`, GET `?account_id&settlement_date&status&limit&cursor`, GET `/fails?from_date&to_date&account_id&limit&cursor` |
 | `/balances` | GET `/{account_id}?as_of_date&limit&cursor`, GET `/{account_id}/{currency}?as_of_date`, GET `/{account_id}/{currency}/projected?as_of_date` |
+| `/raw_custody_positions` | GET `?limit&cursor`, GET `/{record_id}` (REC_ID) — registry-generated, raw tier |
+| `/raw_vendor_securities` | GET `?limit&cursor`, GET `/{record_id}` (Vendor_Ref) — registry-generated, raw tier |
 | `/health` | GET |
 
 ### GraphQL — `bank_ods.graphql`
@@ -586,7 +650,7 @@ Each transport is a thin adapter. It receives a protocol-specific request, calls
 - Endpoint: `POST http://localhost:8001/graphql`
 - Health: `GET /health` → `{"status": "ok"}`
 - SDL generated at runtime from the ENTITIES registry by `sdl.py`
-- 18 query fields with `limit: Int, cursor: String` on all list operations; list wrappers carry `pageInfo: PageInfo! { hasMore, nextCursor }`
+- 22 query fields when both tiers are exposed (18 curated semantic fields + 4 registry-generated raw get/list fields); `limit: Int, cursor: String` on all list operations, list wrappers carry `pageInfo: PageInfo! { hasMore, nextCursor }`
 - `DateTime` custom scalar serializes datetime to ISO string (UTC offset included); `Decimal` custom scalar serializes monetary values as exact strings
 - Health: `GET /health` (liveness); `GET /ready` (readiness, pings MongoDB)
 - Parameter names: camelCase in SDL (`fromDate`, `asOfDate`); resolvers map to service snake_case
@@ -609,6 +673,8 @@ Two additional implementations of the identical GraphQL contract, built to evalu
 | positions | (accountId, securityId, asOfDate) compound unique, asOfDate, accountId |
 | settlements | settlementId (unique), transactionId, (accountId, settlementDate), (status, settlementDate desc, _id) |
 | cash_balances | (accountId, currency, asOfDate) compound unique, asOfDate |
+| raw_custody_positions | REC_ID (unique), (POS_BUS_DATE, POS_ACCT_NBR), POS_CUSIP_NBR |
+| raw_vendor_securities | Vendor_Ref (unique), Cusip (sparse) |
 
 The compound unique index on `positions` and `cash_balances` enforces the append-only snapshot invariant: only one document per (account, security/currency, date).
 
@@ -627,13 +693,15 @@ Tests require a running MongoDB with seeded data (`python scripts/seed_data.py`)
 | `test_rest.py` | REST endpoint HTTP status codes, response shapes, `/health`, 404s, cursor pagination, INVALID_CURSOR→400 |
 | `test_graphql.py` | GraphQL query structure, `/health`, cursor pagination, INVALID_CURSOR error extension |
 | `test_parity.py` | **Cross-layer equivalence** — REST == GraphQL == service for every operation, including byte-identical cursor strings |
-| `test_mcp.py` | MCP parity leg — tool surface (18 tools) + MCP tool results == service results, cursor follow |
+| `test_parity_registry.py` | Registry-driven parity baseline — list/get/not-found parametrized over every exposed entity, so a new entity gets baseline coverage without a new test file |
+| `test_mcp.py` | Consumer MCP parity leg — 18-tool surface + MCP tool results == service results, cursor follow |
+| `test_mcp_ops.py` | Ops MCP server — 12-tool surface, raw tool parity, operational tools (health, stats, recent docs, reconciliation, logs, release checks) |
 | `test_fixes.py` | Regressions: whole-day date windows, INVALID_DATE→400, securities parity, Decimal strings, UTC offsets, `/ready` |
 | `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
 | `test_master_data.py` | Reference-data integrity — SEDOL/LEI format + check digits, global SEDOL uniqueness, one primary listing per security, identical client-master snapshot across a client's accounts, parentClientId links resolve |
 | `test_strawberry_parity.py`, `test_graphene_parity.py` | Evaluation twins — see REVIEW-strawberry-graphql.md |
 
-148 tests total. All must pass before merge.
+172 tests total. All must pass before merge.
 
 ### Parity Test Pattern
 
@@ -677,7 +745,7 @@ The parity harness is the primary contract enforcement mechanism.
 
 **Models as schema source of truth.** Pydantic field definitions are the only schema definition in the codebase. The ENTITIES registry propagates them to MongoDB index creation and GraphQL SDL generation. This makes schema drift structurally impossible: adding a field to a model automatically updates indexes and the SDL at next startup.
 
-**Single service layer.** All three transports call the same 18 async service functions. No transport contains query logic. This makes transports interchangeable, independently deployable, and parity-testable.
+**Single service layer.** Every transport — the consumer trio (REST, GraphQL, `bank-ods` MCP) and the operations `bank-ods-ops` MCP server — calls `bank_ods.services.*`: the 18 curated entity functions, the `generic` get_one/get_many base they wrap, the metadata-driven `raw` helpers, and the `ops` introspection functions. No transport contains query logic. This makes transports interchangeable, independently deployable, and parity-testable.
 
 **Error envelope, never raise.** Service functions return `{"error": ..., "code": ...}` dicts on failure. REST maps these to HTTP status codes via `check()` in `rest/errors.py`. GraphQL resolvers pass through to null-propagation. This keeps error handling explicit and consistent at each transport boundary without using exceptions as control flow.
 
@@ -721,10 +789,16 @@ Each HTTP request produces:
 | `MONGO_TIMEOUT_MS` | `10000` | Server selection, connect, socket timeout (ms) |
 | `DEBUG` | `false` | GraphQL debug mode; `true` exposes stack traces |
 | `LOG_LEVEL` | `INFO` | Python logging level |
-| `MCP_TRANSPORT` | `stdio` | MCP transport: `stdio` (desktop) or `sse` (chatbot/K8s) |
+| `MCP_TRANSPORT` | `stdio` | MCP transport: `stdio` (desktop) or `sse` (chatbot/K8s); applies to both MCP servers |
 | `GRAPHQL_MAX_DEPTH` | `10` | Max query selection depth (validation rule; rejected before resolvers run) |
 | `GRAPHQL_MAX_ROOT_FIELDS` | `10` | Max root fields per operation incl. aliases (blocks alias amplification) |
 | `GRAPHQL_INTROSPECTION` | `true` | Set `false` in production to block `__schema`/`__type` queries |
+| `TRANSPORT_REST_ENABLED` | `true` | Consumer REST transport startup gate |
+| `TRANSPORT_GRAPHQL_ENABLED` | `true` | Consumer GraphQL transport startup gate |
+| `TRANSPORT_MCP_ENABLED` | `true` | Consumer MCP server (`bank-ods`) startup gate |
+| `TRANSPORT_MCP_OPS_ENABLED` | `true` | Operations MCP server (`bank-ods-ops`) startup gate |
+| `EXPOSE_SEMANTIC_TIER` | `true` | Expose semantic-tier entities on the consumer transports (SDL fields, REST routers, semantic MCP tools) |
+| `EXPOSE_RAW_TIER` | `true` | Expose raw-tier entities on the consumer transports; the ops server exposes raw regardless |
 
 Copy `.env.example` to `.env` before running locally.
 

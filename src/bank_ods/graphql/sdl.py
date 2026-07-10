@@ -1,12 +1,29 @@
-"""Generate GraphQL SDL from the Pydantic entity models."""
+"""Generate GraphQL SDL from the Pydantic entity models.
+
+Type blocks and list wrappers are generated for every active entity (see
+models/registry.py). Query root fields come from two places:
+
+  semantic tier — curated field definitions below (_SEMANTIC_QUERY_FIELDS):
+      these carry per-entity filter arguments and composite get keys that
+      model metadata doesn't capture.
+  raw tier      — generated from each model's access metadata (ID_FIELD,
+      UNFILTERED_LIST): a new raw entity added to the registry appears in
+      the SDL with get/list fields automatically.
+"""
 from __future__ import annotations
 
 import typing
 from decimal import Decimal
 from typing import Any, get_args, get_origin
 
-from bank_ods.models.registry import ENTITIES
+from bank_ods import config
 from bank_ods.models.base import BankDocument
+from bank_ods.models.registry import (
+    ENTITIES_RAW,
+    active_entities,
+    get_field_name,
+    list_field_name,
+)
 
 
 # ── Python type → GraphQL scalar ─────────────────────────────────────────────
@@ -99,7 +116,7 @@ def _list_type_block(model: type[BankDocument]) -> str:
 
 # ── Query root ────────────────────────────────────────────────────────────────
 
-_QUERY_FIELDS = """
+_SEMANTIC_QUERY_FIELDS = """
   # Accounts
   get_account(accountId: String!): Account
   list_accounts(clientId: String, status: String, lei: String, domicile: String, limit: Int, cursor: String): AccountList!
@@ -155,8 +172,24 @@ type ProjectedBalance {
 """
 
 
+def _generated_query_fields(model: type[BankDocument]) -> str:
+    """Query fields derived from a model's access metadata."""
+    lines = [f"  # {model.__name__} (generated from registry metadata)"]
+    if model.ID_FIELD:
+        lines.append(
+            f"  {get_field_name(model)}({model.ID_FIELD}: String!): {model.__name__}"
+        )
+    if model.UNFILTERED_LIST:
+        lines.append(
+            f"  {list_field_name(model)}(limit: Int, cursor: String): {model.__name__}List!"
+        )
+    return "\n".join(lines)
+
+
 def generate_sdl() -> str:
     """Build the full GraphQL SDL string from the entity models."""
+    entities = active_entities()
+
     blocks: list[str] = [
         "scalar DateTime",
         "scalar Decimal",
@@ -168,7 +201,7 @@ def generate_sdl() -> str:
     # Collect and emit nested types (e.g. StatusHistoryEntry) first
     seen_nested: set = set()
     nested_types: list[type[BankDocument]] = []
-    for model in ENTITIES:
+    for model in entities:
         for cls in _collect_nested_types(model, seen_nested):
             nested_types.append(cls)
     for cls in nested_types:
@@ -176,7 +209,7 @@ def generate_sdl() -> str:
         blocks.append("")
 
     # Entity types + list wrappers
-    for model in ENTITIES:
+    for model in entities:
         if not model.COLLECTION:
             continue
         blocks.append(_type_block(model))
@@ -184,8 +217,21 @@ def generate_sdl() -> str:
         blocks.append(_list_type_block(model))
         blocks.append("")
 
-    blocks.append(_EXTRA_TYPES)
-    blocks.append("")
-    blocks.append(f"type Query {{{_QUERY_FIELDS}}}")
+    query_fields = ""
+    if config.EXPOSE_SEMANTIC_TIER:
+        blocks.append(_EXTRA_TYPES)
+        blocks.append("")
+        query_fields += _SEMANTIC_QUERY_FIELDS
+    if config.EXPOSE_RAW_TIER:
+        for model in ENTITIES_RAW:
+            query_fields += "\n" + _generated_query_fields(model) + "\n"
+    if not query_fields:
+        # An empty `type Query {}` is invalid SDL and would surface as an
+        # opaque parser crash; refuse with an actionable message instead.
+        raise RuntimeError(
+            "GraphQL schema has no query fields: enable EXPOSE_SEMANTIC_TIER "
+            "and/or EXPOSE_RAW_TIER, or disable the GraphQL transport."
+        )
+    blocks.append(f"type Query {{{query_fields}}}")
 
     return "\n".join(blocks)

@@ -1,4 +1,10 @@
-"""Seed script — drops and repopulates all six bank_ods collections."""
+"""Seed script — drops and repopulates all bank_ods collections (both tiers).
+
+Semantic tier: accounts, securities, transactions, settlements, positions,
+cash_balances. Raw tier: raw_custody_positions (fixed-width mainframe batch
+extract conventions) and raw_vendor_securities (as-received vendor feed with
+its natural inconsistencies).
+"""
 import os
 import random
 from datetime import datetime, timedelta, timezone
@@ -9,6 +15,8 @@ from bson.decimal128 import Decimal128
 from dotenv import load_dotenv
 from faker import Faker
 import pymongo
+
+from bank_ods.services._common import custody_acct_nbr, cusip_from_isin
 
 load_dotenv()
 
@@ -527,6 +535,161 @@ def build_cash_balances(accounts: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Raw tier — records kept in their source wire format (see the raw_* model
+# docstrings in bank_ods/models). Everything is a string on purpose.
+# ---------------------------------------------------------------------------
+
+# Zoned-decimal sign overpunch: the last digit's zone nibble carries the sign.
+_OVERPUNCH_POS = "{ABCDEFGHI"  # 0-9 positive
+_OVERPUNCH_NEG = "}JKLMNOPQR"  # 0-9 negative
+
+
+def zoned(value: float, digits: int, scale: int, signed: bool = False) -> str:
+    """Render a number as display (zoned) decimal: implied decimal point,
+    right-justified, zero-filled — e.g. zoned(850.5, 12, 4) == "0000000008505000".
+    With signed=True the last character carries the sign as an overpunch."""
+    raw = abs(round(value * 10**scale))
+    s = f"{raw:0{digits + scale}d}"
+    if not signed:
+        return s
+    table = _OVERPUNCH_NEG if value < 0 else _OVERPUNCH_POS
+    return s[:-1] + table[int(s[-1])]
+
+
+def julian(dt: datetime) -> str:
+    """CCYYDDD julian date used by batch systems."""
+    return f"{dt.year:04d}{dt.timetuple().tm_yday:03d}"
+
+
+_ASSET_CLS_CD = {"EQUITY": "EQ", "GOVT_BOND": "FI", "CORP_BOND": "FI", "FUND": "FND"}
+_ACCT_TYPE_CD = {"CUSTODY": "CU", "PROPRIETARY": "PR", "OMNIBUS": "OM"}
+_LOC_BY_COUNTRY = {"US": "DTC", "CA": "CDS"}
+
+
+def build_raw_custody_positions(accounts: list[dict], securities: list[dict]) -> list[dict]:
+    """Two batch cycles of fixed-width position detail records (record type 03)."""
+    cycles = [date_offset(2), date_offset(1)]  # two most recent nightly runs
+    records = []
+    for cycle_dt in cycles:
+        cycle = cycle_dt.strftime("%Y%m%d")
+        seq = 0
+        for acct in accounts:
+            held = rng.sample(securities, 3)
+            for sec in held:
+                seq += 1
+                qty = rng.uniform(100, 10000)
+                price = rng.uniform(5, 800)
+                is_fi = sec["assetClass"] in ("GOVT_BOND", "CORP_BOND")
+                # CUSIP is all-or-nothing: 9 chars or empty (partial fill is a reject)
+                cusip = sec.get("cusip") or cusip_from_isin(sec.get("isin")) or ""
+                records.append({
+                    "REC_ID": f"{cycle}-{seq:06d}",
+                    "POS_REC_TYPE": "03",
+                    "POS_BUS_DATE": cycle,
+                    "POS_BANK_NBR": "003",
+                    "POS_BRANCH_CD": acct["custodianBranch"][:4].upper(),
+                    "POS_ACCT_NBR": custody_acct_nbr(acct["accountId"]),
+                    "POS_ACCT_TYPE_CD": _ACCT_TYPE_CD.get(acct["accountType"], "CU"),
+                    "POS_CUSIP_NBR": cusip,
+                    "POS_ISIN_NBR": sec.get("isin") or "",
+                    "POS_SEC_DESC": sec["description"].upper()[:40],
+                    "POS_ASSET_CLS_CD": _ASSET_CLS_CD.get(sec["assetClass"], "EQ"),
+                    "POS_REG_TYPE_CD": rng.choice(["S", "S", "S", "N"]),
+                    "POS_LOC_CD": rng.choice(
+                        [_LOC_BY_COUNTRY.get(sec["country"], "PHYS")] * 8 + ["SEG", "PHYS"]
+                    ),
+                    "POS_SHR_QTY": zoned(qty, 12, 4),
+                    "POS_SHR_QTY_PEND": zoned(rng.choice([0, 0, 0, rng.uniform(0, 200)]), 12, 4),
+                    "POS_MKT_PRICE": zoned(price, 3, 12),
+                    "POS_MKT_VALUE": zoned(qty * price, 13, 2),
+                    "POS_ACCR_INT": zoned(rng.uniform(-500, 3000) if is_fi else 0, 9, 2, signed=True),
+                    "POS_PRICE_DT": julian(cycle_dt),
+                    "POS_LAST_ACTVY_DT": date_offset(rng.randint(2, 30)).strftime("%Y%m%d"),
+                    "POS_PLEDGE_IND": rng.choice(["N"] * 8 + ["Y", ""]),
+                    "POS_CCY_CD": sec["currency"],
+                    "POS_SRC_SYS_ID": "TRSTACCT",
+                })
+    return records
+
+
+# The vendor's asset-class code list has changed twice; deliveries mix all
+# three generations. Same story for country, currency case, and date formats.
+_VENDOR_ASSET_CLS = {
+    "EQUITY": ["EQ", "Equity", "COM"],
+    "GOVT_BOND": ["FI", "Bond", "GOVT"],
+    "CORP_BOND": ["FI", "Bond", "CORP"],
+    "FUND": ["FND", "Fund", "40ACT"],
+}
+_VENDOR_COUNTRY = {"US": ["US", "USA", "UNITED STATES"], "CA": ["CA", "CAN", "CANADA"],
+                   "IE": ["IE", "IRL", "IRELAND"]}
+
+
+def build_raw_vendor_securities(securities: list[dict]) -> list[dict]:
+    """One as-received vendor row per instrument, plus a few vendor-only rows."""
+    rows = []
+    for i, sec in enumerate(securities, 1):
+        cusip = sec.get("cusip")
+        if cusip and cusip.startswith("0") and rng.random() < 0.3:
+            cusip = cusip.lstrip("0")  # classic spreadsheet round-trip casualty
+        ticker = sec.get("ticker")
+        if ticker:
+            ticker = rng.choice([ticker, ticker, f"{ticker.removesuffix('.TO')} "
+                                 + ("CN" if sec["country"] == "CA" else "US"), ticker.lower() + " "])
+        listings = sec.get("listings") or []
+        sedol = listings[0]["sedol"] if listings else rng.choice(["#N/A", None])
+        is_bond = sec["assetClass"] in ("GOVT_BOND", "CORP_BOND")
+        maturity = None
+        if is_bond and sec.get("maturityDate"):
+            m = sec["maturityDate"]
+            maturity = rng.choice([m.strftime("%Y%m%d"), m.strftime("%m/%d/%Y")])
+        elif rng.random() < 0.4:
+            maturity = rng.choice(["00000000", "99991231"])
+        coupon = sec.get("couponRate")
+        rows.append({
+            "Vendor_Ref": f"VND-{i:06d}",
+            "Cusip": cusip,
+            "ISIN_CODE": sec.get("isin") or rng.choice(["N/A", None]),
+            "sedol": sedol,
+            "TICKER": ticker,
+            "SecurityDesc": rng.choice([sec["description"], sec["description"].upper()]),
+            "Issuer_Name": (sec.get("issuer") or "").upper() or None,
+            "ASSET_CLS": rng.choice(_VENDOR_ASSET_CLS.get(sec["assetClass"], ["OTH"])),
+            "CPN_RATE": rng.choice([f"{coupon:06.3f}", str(coupon)]) if coupon is not None else
+                        ("0" if rng.random() < 0.5 else None),
+            "CCY": rng.choice([sec["currency"], sec["currency"], sec["currency"].lower()]),
+            "CNTRY_DOM": rng.choice(_VENDOR_COUNTRY.get(sec["country"], [sec["country"]])),
+            "MATURITY_DT": maturity,
+            "CALLABLE_FLG": rng.choice(["Y", "N", "N", "U", None]) if is_bond else "N",
+            "ISSUE_STATUS": rng.choice(["A", "ACT", "Active"]),
+            "EXCH_CD": rng.choice([sec.get("exchange"), listings[0]["micCode"] if listings else None]),
+            "LAST_UPD_TS": rng.choice([
+                (TODAY - timedelta(days=rng.randint(1, 20))).strftime("%Y-%m-%d %H:%M:%S"),
+                (TODAY - timedelta(days=rng.randint(1, 20))).strftime("%d-%b-%y").upper(),
+            ]),
+        })
+    # Vendor-only rows — instruments the curated master doesn't carry
+    rows.append({
+        "Vendor_Ref": f"VND-{len(securities) + 1:06d}",
+        "Cusip": None, "ISIN_CODE": "XS2010028699", "sedol": "#N/A",
+        "TICKER": None, "SecurityDesc": "EUROCLEAR ELIGIBLE MTN 1.85% 2033",
+        "Issuer_Name": "KOMMUNINVEST I SVERIGE AB", "ASSET_CLS": "Bond",
+        "CPN_RATE": "01.850", "CCY": "EUR", "CNTRY_DOM": "SWEDEN",
+        "MATURITY_DT": "20330901", "CALLABLE_FLG": "N", "ISSUE_STATUS": "ACT",
+        "EXCH_CD": None, "LAST_UPD_TS": "14-FEB-25",
+    })
+    rows.append({
+        "Vendor_Ref": f"VND-{len(securities) + 2:06d}",
+        "Cusip": "31846V567", "ISIN_CODE": None, "sedol": None,
+        "TICKER": "FGXXX", "SecurityDesc": "First Amer Govt Oblig Fd Cl X",
+        "Issuer_Name": "FIRST AMERICAN FUNDS", "ASSET_CLS": "1",
+        "CPN_RATE": "0", "CCY": "usd", "CNTRY_DOM": "USA",
+        "MATURITY_DT": "99991231", "CALLABLE_FLG": None, "ISSUE_STATUS": "MAT'D",
+        "EXCH_CD": "N", "LAST_UPD_TS": "2025-11-30 04:12:44",
+    })
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Decimal128 conversion — monetary/quantity/rate fields are stored as
 # MongoDB Decimal128 (exact precision), never as IEEE-754 doubles.
 # ---------------------------------------------------------------------------
@@ -572,6 +735,10 @@ def main() -> None:
     positions = build_positions(accounts, securities)
     print("Building cash balances...")
     cash_balances = build_cash_balances(accounts)
+    print("Building raw custody positions...")
+    raw_custody_positions = build_raw_custody_positions(accounts, securities)
+    print("Building raw vendor securities...")
+    raw_vendor_securities = build_raw_vendor_securities(securities)
 
     collections = [
         ("accounts", accounts),
@@ -580,6 +747,8 @@ def main() -> None:
         ("settlements", settlements),
         ("positions", positions),
         ("cash_balances", cash_balances),
+        ("raw_custody_positions", raw_custody_positions),
+        ("raw_vendor_securities", raw_vendor_securities),
     ]
 
     for name, docs in collections:

@@ -182,6 +182,61 @@ type CashBalanceList {
   pageInfo: PageInfo!
 }
 
+type RawCustodyPosition {
+  REC_ID: String!
+  POS_REC_TYPE: String!
+  POS_BUS_DATE: String!
+  POS_BANK_NBR: String!
+  POS_BRANCH_CD: String!
+  POS_ACCT_NBR: String!
+  POS_ACCT_TYPE_CD: String!
+  POS_CUSIP_NBR: String!
+  POS_ISIN_NBR: String!
+  POS_SEC_DESC: String!
+  POS_ASSET_CLS_CD: String!
+  POS_REG_TYPE_CD: String!
+  POS_LOC_CD: String!
+  POS_SHR_QTY: String!
+  POS_SHR_QTY_PEND: String!
+  POS_MKT_PRICE: String!
+  POS_MKT_VALUE: String!
+  POS_ACCR_INT: String!
+  POS_PRICE_DT: String!
+  POS_LAST_ACTVY_DT: String!
+  POS_PLEDGE_IND: String!
+  POS_CCY_CD: String!
+  POS_SRC_SYS_ID: String!
+}
+
+type RawCustodyPositionList {
+  data: [RawCustodyPosition!]!
+  pageInfo: PageInfo!
+}
+
+type RawVendorSecurity {
+  Vendor_Ref: String!
+  Cusip: String
+  ISIN_CODE: String
+  sedol: String
+  TICKER: String
+  SecurityDesc: String!
+  Issuer_Name: String
+  ASSET_CLS: String!
+  CPN_RATE: String
+  MATURITY_DT: String
+  CCY: String
+  CNTRY_DOM: String
+  CALLABLE_FLG: String
+  ISSUE_STATUS: String
+  EXCH_CD: String
+  LAST_UPD_TS: String
+}
+
+type RawVendorSecurityList {
+  data: [RawVendorSecurity!]!
+  pageInfo: PageInfo!
+}
+
 
 type TransactionSummaryItem {
   transactionType: String!
@@ -235,4 +290,12 @@ type Query {
   get_cash_balance(accountId: String!, currency: String!, asOfDate: String!): CashBalance
   get_cash_balances(accountId: String!, asOfDate: String!, limit: Int, cursor: String): CashBalanceList!
   get_projected_balance(accountId: String!, currency: String!, asOfDate: String!): ProjectedBalance
+
+  # RawCustodyPosition (generated from registry metadata)
+  get_raw_custody_position(REC_ID: String!): RawCustodyPosition
+  list_raw_custody_positions(limit: Int, cursor: String): RawCustodyPositionList!
+
+  # RawVendorSecurity (generated from registry metadata)
+  get_raw_vendor_security(Vendor_Ref: String!): RawVendorSecurity
+  list_raw_vendor_securities(limit: Int, cursor: String): RawVendorSecurityList!
 }

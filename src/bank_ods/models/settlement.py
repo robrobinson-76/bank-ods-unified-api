@@ -23,6 +23,7 @@ class Settlement(BankDocument):
         ([("accountId", 1), ("settlementDate", -1)], {}),
         ([("status", 1), ("settlementDate", -1), ("_id", 1)], {}),
     ]
+    ID_FIELD: ClassVar[str] = "settlementId"
 
     settlementId: str
     transactionId: str

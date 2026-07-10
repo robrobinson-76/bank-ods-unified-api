@@ -2,9 +2,14 @@
 
 ## Overview
 
-This guide covers how AI agents (Claude Code or any MCP-capable client) should interact with the `bank-ods` MCP server: tool naming conventions, parameter formats, query patterns, error handling, and pagination.
+This guide covers how AI agents (Claude Code or any MCP-capable client) should interact with the bank ODS MCP servers: tool naming conventions, parameter formats, query patterns, error handling, and pagination.
 
-The MCP server is one of three transports sharing a single service layer. All tools delegate to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs. There are 18 read-only tools across six domains.
+There are **two MCP servers with distinct personas**, both read-only, both delegating to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs:
+
+- **`bank-ods` (consumer persona)** — 18 clean semantic domain tools across six domains, for AI agents, chatbot integrations, and downstream application teams. Productionized alongside REST and GraphQL.
+- **`bank-ods-ops` (operations persona)** — for engineers, QA, support, and release-monitoring agents: 8 operational tools (health, collection stats, recent-document inspection, raw-record field search, raw-vs-curated reconciliation, in-process logs, composite release checks) plus 4 registry-generated raw-tier tools (12 tools total). Raw inspection is this server's purpose, so its raw tools are always present regardless of `EXPOSE_RAW_TIER` (that flag governs the consumer transports). Internal-only by intent — never wired into consumer-facing clients.
+
+Pick the server by task: answering business questions about accounts/positions/settlements → `bank-ods`; investigating *why the data looks wrong*, feed drift, or verifying a release → `bank-ods-ops`.
 
 Two contract conventions apply everywhere:
 
@@ -15,9 +20,15 @@ Two contract conventions apply everywhere:
 
 ## MCP Server Identity
 
-**Server name:** `bank-ods`  
-**Transport:** `MCP_TRANSPORT` env var — `stdio` (default, Claude Desktop / VS Code) or `sse` (chatbot / K8s)  
-**Start command:** `python -m bank_ods.mcp`
+| | Consumer | Operations |
+|---|---|---|
+| **Server name** | `bank-ods` | `bank-ods-ops` |
+| **Start command** | `python -m bank_ods.mcp` | `python -m bank_ods.mcp_ops` |
+| **Enable flag** | `TRANSPORT_MCP_ENABLED` | `TRANSPORT_MCP_OPS_ENABLED` |
+| **Audience** | AI agents, downstream teams | engineers, QA, support, release monitors |
+| **Exposure** | consumer path, governed | internal-only |
+
+**Transport (both):** `MCP_TRANSPORT` env var — `stdio` (default, Claude Desktop / VS Code) or `sse` (chatbot / K8s; for the ops server, internal endpoints only)
 
 ---
 
@@ -281,6 +292,87 @@ Fetch all currency balances for an account on a given date.
 
 ---
 
+## Operations Server Tool Reference (`bank-ods-ops`)
+
+Everything below lives on the **operations server**, not the consumer server. All tools are read-only; collection-name parameters accept only collections in the entity registry (unknown names return `UNKNOWN_COLLECTION` with the registered list).
+
+### Operational tools
+
+#### `ping_database`
+
+No parameters. Returns `{ok, version, uptimeSeconds, connections}` — the first call to make when anything looks wrong.
+
+#### `list_collections`
+
+No parameters. Returns every registered collection with `tier` (semantic/raw), `count`, and `lastInsertAt` (derived from the newest ObjectId). The starting point for a health sweep.
+
+#### `get_collection_stats`
+
+**Parameters:** `collection: str` — a registered collection name
+
+**Returns:** `{collection, tier, count, sizeBytes, storageSizeBytes, indexes: [{name, keys}], lastInsertAt}`
+
+#### `query_recent`
+
+**Parameters:** `collection: str`, `limit: int` *(optional, default 10, max 50)*
+
+**Returns:** the N most recently inserted documents, newest first, each with an added `_insertedAt` — use to inspect what a loader just wrote.
+
+#### `find_raw_records`
+
+**Parameters:** `collection: str` *(raw-tier only)*, `field: str` *(any field of the raw model)*, `value: str`, `limit: int` *(optional, default 20, max 50)*
+
+Exact-match search over one raw collection — "show me the raw records for account X". The match is against the **stored wire-format value**: custody accounts are zero-filled 12-char (`POS_ACCT_NBR: "000000000001"` for account 1), CUSIPs are 9-char or empty. Field names are validated against the model — an unknown field returns `UNKNOWN_FIELD` with the valid field list; semantic collections return `NOT_RAW_COLLECTION` (use the domain tools on `bank-ods` instead).
+
+**Returns:** the standard `{data: [...], page_info: {has_more, next_cursor}}` page — follow `next_cursor` to walk every match for a busy account.
+
+#### `reconcile_custody_feed`
+
+**Parameters:** `cycle_date: str` *(optional, CCYYMMDD; defaults to the latest cycle in the feed)*
+
+Traces one raw custody batch cycle into the curated `positions` collection — the "why didn't this record appear?" tool. Every raw record is resolved (`POS_ACCT_NBR` → accountId, `POS_CUSIP_NBR`/`POS_ISIN_NBR` → securityId) and checked for a curated position.
+
+**Returns:** `{cycleDate, records, matched, unmatched, issues: [{recId, reason, accountId, securityId, cusip}]}` where `reason` is `UNKNOWN_ACCOUNT`, `UNKNOWN_SECURITY`, or `NO_CURATED_POSITION` (first 20 issues listed).
+
+#### `get_recent_logs`
+
+**Parameters:** `level: str` *(optional, default "INFO" — DEBUG/INFO/WARNING/ERROR)*, `limit: int` *(optional, default 50)*
+
+Newest-first entries from this process's in-memory log ring. Process-local by design: it answers "what just happened in this process"; cross-process search belongs to the platform log aggregator.
+
+#### `run_release_checks`
+
+No parameters. Composite post-release verification: database reachability, per-collection population, raw feed freshness, and custody reconciliation, rolled up to `{status: PASS|WARN|FAIL, checks: [{name, status, detail}]}`.
+
+**For release-monitoring agents:** poll after a deployment until `PASS`; alert on `FAIL`, or on a `WARN` that persists across polls. Use the per-check `detail` to decide which investigation tool to call next (`reconcile_custody_feed` for reconciliation warnings, `list_collections` for population failures, `get_recent_logs` for anything unexplained).
+
+### Raw tier (registry-generated tool group)
+
+These tools are registered on the ops server when `EXPOSE_RAW_TIER=true` (the dev default). They expose feed records **as received** — field names and values keep the source system's conventions, so read the conventions below before interpreting values. Tool names, GraphQL fields, and REST routes for these entities are generated from the entity registry and always match.
+
+#### `list_raw_custody_positions` / `get_raw_custody_position`
+
+Nightly mainframe custody position extract (fixed-width batch feed, record type 03), one document per detail record.
+
+**Parameters:** `list_…` takes `limit` / `cursor` (standard pagination contract); `get_…` takes `record_id: str` — the `REC_ID` field, `"<POS_BUS_DATE>-<sequence>"`.
+
+**Value conventions (mainframe wire format):**
+
+- Numerics are zoned decimal strings with an **implied decimal point**: `POS_SHR_QTY` `"0000000008505000"` with PIC 9(12)V9(4) means 850.5. Scales: `POS_SHR_QTY`/`POS_SHR_QTY_PEND` 4, `POS_MKT_PRICE` 12, `POS_MKT_VALUE` 2.
+- `POS_ACCR_INT` is **signed**: the last character is a sign overpunch (`{`, `A`–`I` positive; `}`, `J`–`R` negative, each also encoding the final digit). `"0000017463A"` = +1746.31.
+- `POS_BUS_DATE` / `POS_LAST_ACTVY_DT` are `CCYYMMDD`; `POS_PRICE_DT` is julian `CCYYDDD`.
+- `POS_CUSIP_NBR` is 9 characters or `""` (all-or-nothing fill); `POS_ACCT_NBR` is zero-filled 12.
+
+#### `list_raw_vendor_securities` / `get_raw_vendor_security`
+
+Bespoke third-party instrument reference feed, one document per delivered row.
+
+**Parameters:** `list_…` takes `limit` / `cursor`; `get_…` takes `record_id: str` — the `Vendor_Ref` field, e.g. `"VND-000117"`.
+
+**Value conventions (as-delivered, unnormalized):** identifiers may be missing, `"N/A"`, or `"#N/A"`; `Cusip` may have lost a leading zero; `ASSET_CLS` mixes code-list generations (`"EQ"`, `"Equity"`, `"COM"`, `"1"`); numbers are string-encoded; dates mix `CCYYMMDD`, `MM/DD/YYYY`, and sentinels (`"99991231"` perpetual, `"00000000"`); country/currency codes drift (`"US"`/`"USA"`/`"UNITED STATES"`, `"usd"`). Only `Vendor_Ref` is guaranteed unique — treat everything else as needing validation before use.
+
+---
+
 ## Parameter Formats
 
 ### Dates
@@ -412,6 +504,43 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
      in every returned account under "client" — no second call needed
 ```
 
+### Release monitoring (ops server — for an AI agent watching a deployment)
+
+```
+1. run_release_checks()                        → PASS: done. FAIL: alert now.
+2. On WARN → read checks[].detail:
+   - custody_reconciliation → reconcile_custody_feed()   → per-record reasons
+   - custody_feed_freshness → list_collections()          → which loads are stale
+3. get_recent_logs(level="ERROR")              → anything the process just logged
+4. Re-poll run_release_checks() on an interval; alert if WARN persists or
+   any check degrades between polls.
+```
+
+### Feed investigation: "why is this record missing?" (ops server)
+
+```
+1. reconcile_custody_feed(cycle_date="20260708")
+   → find the record's REC_ID among issues[]; reason tells you where it broke:
+     UNKNOWN_ACCOUNT     → account mapping problem (check POS_ACCT_NBR)
+     UNKNOWN_SECURITY    → identifier not in the security master
+                           (get_raw_custody_position → check CUSIP/ISIN fill)
+     NO_CURATED_POSITION → feed record arrived but curation didn't produce a position
+2. query_recent("raw_custody_positions")       → confirm what the loader wrote and when
+3. get_recent_logs(level="WARNING")            → loader/service errors in this process
+```
+
+### Raw records for a specific account (ops server)
+
+```
+1. get_account(account_id="ACC-000007")        → confirm the account (consumer server)
+2. find_raw_records("raw_custody_positions", "POS_ACCT_NBR", "000000000007")
+   → all raw feed records for that account, wire-format values
+   → remember the raw key is zero-filled 12-char, NOT "ACC-000007"
+3. Same pattern for any feed field:
+   find_raw_records("raw_custody_positions", "POS_CUSIP_NBR", "037833100")
+   find_raw_records("raw_vendor_securities", "Cusip", "37833100")   ← as-delivered value
+```
+
 ---
 
 ## Pagination
@@ -481,7 +610,7 @@ Rules:
 
 ## MCP Configuration
 
-Register in `claude_desktop_config.json` (`%APPDATA%\Claude\` on Windows):
+Register in `claude_desktop_config.json` (`%APPDATA%\Claude\` on Windows). Register the consumer server for everyone; add the ops server only for internal engineering/support environments (it exposes raw feed data and operational internals):
 
 ```json
 {
@@ -494,23 +623,36 @@ Register in `claude_desktop_config.json` (`%APPDATA%\Claude\` on Windows):
         "MONGODB_URI": "mongodb://localhost:27017",
         "MONGODB_DB": "bank_ods"
       }
+    },
+    "bank-ods-ops": {
+      "command": "uv",
+      "args": ["run", "python", "-m", "bank_ods.mcp_ops"],
+      "cwd": "C:/dev/clio-git/mongo-mcp-test",
+      "env": {
+        "MONGODB_URI": "mongodb://localhost:27017",
+        "MONGODB_DB": "bank_ods"
+      }
     }
   }
 }
 ```
 
-Tools appear in Claude Code as `mcp__bank-ods__<tool_name>`.
+Tools appear in Claude Code as `mcp__bank-ods__<tool_name>` and `mcp__bank-ods-ops__<tool_name>`.
 
 ---
 
-## Extending the Server
+## Extending the Servers
 
-To add a new tool:
+**A new semantic consumer tool:**
 
 1. Add `async def` service function to `bank_ods/services/<domain>.py`
 2. Add a one-line `@mcp.tool()` wrapper in `bank_ods/mcp/tools.py`
 3. Add a REST endpoint in `bank_ods/rest/routers/<domain>.py`
-4. Add a GraphQL resolver in `bank_ods/graphql/resolvers.py` (SDL updates automatically)
+4. Add a resolver in `bank_ods/graphql/resolvers.py` and its field to `_SEMANTIC_QUERY_FIELDS` in `bank_ods/graphql/sdl.py`
 5. Add service tests in `tests/test_services.py` and a parity assertion in `tests/test_parity.py`
 
-Do not add MongoDB query logic outside `bank_ods/services/*`. Do not add new collections without discussion (see CLAUDE.md).
+**A new raw-tier entity:** add the model to `ENTITIES_RAW` (with `ID_FIELD`, `DEFAULT_SORT`, `UNFILTERED_LIST`) and seed it. Indexes, SDL get/list fields, GraphQL resolvers, REST routes, the ops raw tool group, and baseline parity tests are all generated from the registry — no per-surface wiring.
+
+**A new operational tool** (health, introspection, reconciliation, release checks): add an `async def` to `bank_ods/services/ops.py` and a one-line `@mcp.tool()` wrapper in `bank_ods/mcp_ops/tools.py`, then a test in `tests/test_mcp_ops.py`. Ops tools are read-only and belong only on `bank-ods-ops`, never on the consumer server.
+
+Do not add MongoDB query logic outside `bank_ods/services/*`. Do not add mutation tools to either server. Do not add new collections without discussion (see CLAUDE.md).

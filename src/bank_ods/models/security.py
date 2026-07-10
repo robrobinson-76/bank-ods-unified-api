@@ -51,6 +51,9 @@ class Security(BankDocument):
             },
         ),
     ]
+    ID_FIELD: ClassVar[str] = "securityId"
+    DEFAULT_SORT: ClassVar[list[tuple[str, int]]] = [("securityId", 1)]
+    UNFILTERED_LIST: ClassVar[bool] = True
 
     securityId: str
     isin: Optional[str] = None

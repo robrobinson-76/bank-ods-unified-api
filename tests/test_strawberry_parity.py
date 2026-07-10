@@ -278,12 +278,21 @@ def _type_str(t):
 
 
 def _contract_map(introspection: dict) -> dict:
+    """Shape map restricted to the evaluated contract: semantic-tier types only.
+
+    The evaluation twins implement the semantic contract the review compared;
+    the primary Ariadne app has since grown registry-generated raw-tier query
+    fields, which are out of scope here — Query fields returning types outside
+    _CONTRACT_TYPES are dropped before comparison.
+    """
     out = {}
     for t in introspection["data"]["__schema"]["types"]:
         if t["name"] not in _CONTRACT_TYPES:
             continue
         fields = {}
         for f in t.get("fields") or []:
+            if t["name"] == "Query" and _type_str(f["type"]).strip("![]") not in _CONTRACT_TYPES:
+                continue
             fields[f["name"]] = {
                 "type": _type_str(f["type"]),
                 "args": {a["name"]: _type_str(a["type"]) for a in f.get("args") or []},

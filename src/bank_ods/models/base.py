@@ -14,10 +14,22 @@ IndexSpec = tuple[str | list[tuple[str, int]], dict[str, Any]]
 
 
 class BankDocument(BaseModel):
-    """Base for all six bank ODS entity models.
+    """Base for all bank ODS entity models.
 
-    Field names use camelCase to match MongoDB documents directly.
+    Field names match MongoDB documents directly (camelCase for the semantic
+    tier; raw-tier models preserve their source feed's field names verbatim).
     COLLECTION and INDEXES must be set on each subclass.
+
+    Access metadata (drives registry-generated exposure — SDL query fields,
+    REST routes, MCP tools, parity tests):
+      ID_FIELD        single natural-key field for get-by-id; "" when the
+                      entity is keyed by a composite (excluded from generated
+                      get fields).
+      DEFAULT_SORT    stable sort for unfiltered listing (paginate() appends
+                      an _id tie-breaker).
+      UNFILTERED_LIST whether the entity supports listing without required
+                      filters (drives generated list fields and the baseline
+                      parity tests).
     """
 
     model_config = ConfigDict(
@@ -28,6 +40,9 @@ class BankDocument(BaseModel):
 
     COLLECTION: ClassVar[str]
     INDEXES: ClassVar[list[IndexSpec]]
+    ID_FIELD: ClassVar[str] = ""
+    DEFAULT_SORT: ClassVar[list[tuple[str, int]]] = []
+    UNFILTERED_LIST: ClassVar[bool] = False
 
     @field_validator("*", mode="before")
     @classmethod

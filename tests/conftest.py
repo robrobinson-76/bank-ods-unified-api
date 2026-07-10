@@ -110,3 +110,14 @@ async def gql_query(client: AsyncClient, query: str, variables: dict | None = No
     resp = await client.post("/graphql/", json=payload)
     resp.raise_for_status()
     return resp.json()
+
+
+def mcp_payload(result):
+    """Extract the dict payload from a fastmcp CallToolResult (shared by the
+    consumer and ops MCP test suites)."""
+    import json
+
+    data = getattr(result, "data", None)
+    if isinstance(data, dict):
+        return data
+    return json.loads(result.content[0].text)

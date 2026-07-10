@@ -41,6 +41,9 @@ class Account(BankDocument):
         ("client.lei", {}),
         ("status", {}),
     ]
+    ID_FIELD: ClassVar[str] = "accountId"
+    DEFAULT_SORT: ClassVar[list[tuple[str, int]]] = [("accountId", 1)]
+    UNFILTERED_LIST: ClassVar[bool] = True
 
     accountId: str
     accountName: str
