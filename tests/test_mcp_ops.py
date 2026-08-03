@@ -5,8 +5,10 @@ operational tools (health, stats, recent docs, reconciliation, logs, release
 checks) against the seeded database.
 """
 import logging
+from datetime import datetime, timedelta, timezone
 
 import pytest
+import pytest_asyncio
 from fastmcp import Client
 
 import bank_ods.services.raw as svc_raw
@@ -16,13 +18,23 @@ from tests.conftest import mcp_payload as _payload
 
 pytestmark = pytest.mark.asyncio
 
-EXPECTED_OPS_TOOLS = {
-    # operational group (mcp_ops/tools.py)
+EXPECTED_OPS_OPERATIONAL_TOOLS = {
+    # operational group (mcp_ops/tools.py) — hand-written, no registry derivation
     "ping_database", "list_collections", "get_collection_stats", "query_recent",
     "find_raw_records", "reconcile_custody_feed", "get_recent_logs", "run_release_checks",
-    # raw tool group (mcp/raw_tools.py, registry-generated)
-    "get_raw_custody_position", "list_raw_custody_positions",
-    "get_raw_vendor_security", "list_raw_vendor_securities",
+    # ingestion observability (reads ingest_state; never touches Kafka)
+    "get_ingestion_status", "get_dlq_summary", "get_batch_history",
+    "reconcile_crm_accounts", "reconcile_vendor_securities",
+}
+
+# The raw group is registry-generated: every ENTITIES_RAW model contributes a
+# get + list tool. Deriving the expectation the same way the server does keeps
+# this assertion about the *mechanism* — a new raw entity should not need this
+# test edited, while a broken generator still fails loudly.
+EXPECTED_OPS_TOOLS = EXPECTED_OPS_OPERATIONAL_TOOLS | {
+    name
+    for model in ENTITIES_RAW
+    for name in (get_field_name(model), list_field_name(model))
 }
 
 
@@ -164,7 +176,133 @@ async def test_ops_release_checks():
     assert names == {
         "database_reachable", "collections_populated",
         "custody_feed_freshness", "custody_reconciliation",
+        "feed_freshness", "dlq_empty",
     }
     by_name = {c["name"]: c for c in result["checks"]}
     assert by_name["database_reachable"]["status"] == "PASS"
     assert by_name["collections_populated"]["status"] == "PASS"
+
+
+# ── Ingestion observability ──────────────────────────────────────────────────
+#
+# These read the `ingest_state` collection that ODS Ingest writes. The fixture
+# below seeds synthetic state so the tests stay in the core (Mongo-only) suite:
+# the tools are being tested, not the pipeline that fills them.
+
+INGEST_STATE = "ingest_state"
+
+
+@pytest_asyncio.fixture
+async def ingest_state(db):
+    """Synthetic ingest state: one current feed, one stale, one DLQ, one batch.
+
+    Saves and restores whatever was already there: on a machine that has run
+    the pipeline, `ingest_state` holds real heartbeats under exactly these
+    keys, and a test must not destroy them.
+    """
+    now = datetime.now(tz=timezone.utc)
+    docs = [
+        {"_id": "sink:ods.raw.custody.positions", "kind": "sink",
+         "topic": "ods.raw.custody.positions", "collection": "raw_custody_positions",
+         "recordsLanded": 500, "lastLandedAt": now - timedelta(hours=1)},
+        {"_id": "sink:ods.raw.cash.movements", "kind": "sink",
+         "topic": "ods.raw.cash.movements", "collection": "raw_cash_movements",
+         "recordsLanded": 40, "lastLandedAt": now - timedelta(hours=48)},  # past its cadence
+        {"_id": "watermark:vendorsec", "kind": "watermark", "source": "vendorsec",
+         "value": "2026-07-30T12:00:00+00:00", "recordsTotal": 52, "polls": 3,
+         "updatedAt": now},
+        {"_id": "dlq:ods.raw.crm.clients", "kind": "dlq", "topic": "ods.raw.crm.clients",
+         "count": 3, "lastError": "deserialize failed: schema id not found",
+         "lastErrorAt": now, "samples": [{"stage": "sink", "partition": 0, "offset": 19}]},
+        {"_id": "batch:CUSTPOS_20260730.dat:abc123", "kind": "batch",
+         "batchId": "CUSTPOS_20260730.dat:abc123", "updatedAt": now,
+         "manifest": {"batchId": "CUSTPOS_20260730.dat:abc123",
+                      "fileName": "CUSTPOS_20260730.dat", "cycleDate": "20260730",
+                      "recordCount": 500, "status": "COMPLETE", "failReason": None}},
+    ]
+    # Also taken over: a feed that must appear as NEVER_LANDED. On a machine
+    # that has run the pipeline it has a real heartbeat, so the test controls
+    # its absence rather than assuming it.
+    absent_ids = ["sink:ods.raw.vendorsec.securities"]
+    managed_ids = [d["_id"] for d in docs] + absent_ids
+    saved = await db[INGEST_STATE].find({"_id": {"$in": managed_ids}}).to_list(length=None)
+
+    await db[INGEST_STATE].delete_many({"_id": {"$in": managed_ids}})
+    await db[INGEST_STATE].insert_many(docs)
+    try:
+        yield
+    finally:
+        await db[INGEST_STATE].delete_many({"_id": {"$in": managed_ids}})
+        if saved:
+            await db[INGEST_STATE].insert_many(saved)
+
+
+async def test_ops_ingestion_status_classifies_feed_freshness(ingest_state):
+    """Every declared feed is reported, including ones that never landed."""
+    async with Client(ops_mcp) as client:
+        result = _payload(await client.call_tool("get_ingestion_status", {}))
+
+    by_topic = {f["topic"]: f for f in result["data"]}
+    assert by_topic["ods.raw.custody.positions"]["status"] == "CURRENT"
+    assert by_topic["ods.raw.custody.positions"]["recordsLanded"] == 500
+    # 48h old against an 8h intraday cadence.
+    assert by_topic["ods.raw.cash.movements"]["status"] == "STALE"
+    # A feed with no sink heartbeat at all must be visible, not omitted.
+    assert by_topic["ods.raw.vendorsec.securities"]["status"] == "NEVER_LANDED"
+    assert by_topic["ods.raw.vendorsec.securities"]["lastLandedAt"] is None
+
+    watermarks = {w["source"]: w for w in result["watermarks"]}
+    assert watermarks["vendorsec"]["value"] == "2026-07-30T12:00:00+00:00"
+    assert watermarks["vendorsec"]["polls"] == 3
+
+
+async def test_ops_dlq_summary(ingest_state):
+    async with Client(ops_mcp) as client:
+        result = _payload(await client.call_tool("get_dlq_summary", {}))
+    assert result["totalDeadLettered"] >= 3
+    entry = next(e for e in result["data"] if e["topic"] == "ods.raw.crm.clients")
+    assert entry["count"] == 3
+    assert "schema id not found" in entry["lastError"]
+    assert entry["samples"]
+
+
+async def test_ops_batch_history(ingest_state):
+    async with Client(ops_mcp) as client:
+        result = _payload(await client.call_tool("get_batch_history", {"limit": 5}))
+    batch = next(b for b in result["data"] if b["cycleDate"] == "20260730")
+    assert batch["status"] == "COMPLETE"
+    assert batch["recordCount"] == 500
+    assert batch["failReason"] is None
+
+
+async def test_ops_release_checks_flag_stale_feeds_and_dlq(ingest_state):
+    """The two ingestion failures a monitoring agent must not miss."""
+    async with Client(ops_mcp) as client:
+        result = _payload(await client.call_tool("run_release_checks", {}))
+    by_name = {c["name"]: c for c in result["checks"]}
+    # A feed past its cadence warns rather than fails — it may simply be quiet.
+    assert by_name["feed_freshness"]["status"] == "WARN"
+    assert "ods.raw.cash.movements" in by_name["feed_freshness"]["detail"]["stale"]
+    assert by_name["dlq_empty"]["status"] == "WARN"
+    assert by_name["dlq_empty"]["detail"]["totalDeadLettered"] >= 3
+    assert result["status"] in ("WARN", "FAIL")
+
+
+async def test_ops_reconcile_crm_accounts():
+    """Seeded CRM change events trace cleanly into the seeded accounts."""
+    async with Client(ops_mcp) as client:
+        result = _payload(await client.call_tool("reconcile_crm_accounts", {}))
+    assert result["accountsInChangeLog"] > 0
+    assert result["matched"] + result["unmatched"] == result["accountsInChangeLog"]
+    for issue in result["issues"]:
+        assert issue["reason"] in ("MISSING", "STATUS_MISMATCH", "STALE_CLIENT_EMBED")
+
+
+async def test_ops_reconcile_vendor_securities():
+    """Vendor rows resolve to securities; unmatched rows are reported, not failed."""
+    async with Client(ops_mcp) as client:
+        result = _payload(await client.call_tool("reconcile_vendor_securities", {}))
+    assert result["vendorRows"] > 0
+    assert result["matched"] + result["unmatched"] == result["vendorRows"]
+    for issue in result["issues"]:
+        assert issue["reason"] == "UNMATCHED_VENDOR_RECORD"

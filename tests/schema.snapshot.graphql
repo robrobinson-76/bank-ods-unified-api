@@ -38,6 +38,34 @@ type StatusHistoryEntry {
   timestamp: DateTime!
 }
 
+type CrmClientState {
+  client_id: String!
+  client_name: String
+  lei: String
+  country_domicile: String
+  country_incorp: String
+  tax_residencies: String
+  classification: String
+  kyc_status: String
+  risk_rating: String
+  legal_entity_type: String
+  parent_client_id: String
+  updated_at: String
+}
+
+type CrmAccountState {
+  account_nbr: String!
+  client_id: String
+  account_name: String
+  account_type: String
+  base_ccy: String
+  status: String
+  open_date: String
+  close_date: String
+  branch: String
+  updated_at: String
+}
+
 type Account {
   accountId: String!
   accountName: String!
@@ -59,6 +87,7 @@ type AccountList {
 
 type Security {
   securityId: String!
+  vendorUpdatedAt: String
   isin: String
   cusip: String
   ticker: String
@@ -215,6 +244,7 @@ type RawCustodyPositionList {
 
 type RawVendorSecurity {
   Vendor_Ref: String!
+  SRC_UPDATED_AT: String
   Cusip: String
   ISIN_CODE: String
   sedol: String
@@ -234,6 +264,56 @@ type RawVendorSecurity {
 
 type RawVendorSecurityList {
   data: [RawVendorSecurity!]!
+  pageInfo: PageInfo!
+}
+
+type RawCashMovement {
+  MOVEMENT_ID: String!
+  MOV_FILE_DATE: String!
+  MOV_FILE_TIME: String!
+  MOV_ACCT_NBR: String!
+  MOV_CCY_CD: String!
+  MOV_AMT: String!
+  MOV_TYPE_CD: String!
+  MOV_VALUE_TS: String!
+  MOV_NARRATIVE: String!
+  MOV_SRC_SYS_ID: String!
+}
+
+type RawCashMovementList {
+  data: [RawCashMovement!]!
+  pageInfo: PageInfo!
+}
+
+type RawCrmClientEvent {
+  EVENT_ID: String!
+  OP: String!
+  PK: String!
+  LSN: String!
+  TS_MS: String!
+  SOURCE_TABLE: String!
+  BEFORE: CrmClientState
+  AFTER: CrmClientState
+}
+
+type RawCrmClientEventList {
+  data: [RawCrmClientEvent!]!
+  pageInfo: PageInfo!
+}
+
+type RawCrmAccountEvent {
+  EVENT_ID: String!
+  OP: String!
+  PK: String!
+  LSN: String!
+  TS_MS: String!
+  SOURCE_TABLE: String!
+  BEFORE: CrmAccountState
+  AFTER: CrmAccountState
+}
+
+type RawCrmAccountEventList {
+  data: [RawCrmAccountEvent!]!
   pageInfo: PageInfo!
 }
 
@@ -298,4 +378,16 @@ type Query {
   # RawVendorSecurity (generated from registry metadata)
   get_raw_vendor_security(Vendor_Ref: String!): RawVendorSecurity
   list_raw_vendor_securities(limit: Int, cursor: String): RawVendorSecurityList!
+
+  # RawCashMovement (generated from registry metadata)
+  get_raw_cash_movement(MOVEMENT_ID: String!): RawCashMovement
+  list_raw_cash_movements(limit: Int, cursor: String): RawCashMovementList!
+
+  # RawCrmClientEvent (generated from registry metadata)
+  get_raw_crm_client_event(EVENT_ID: String!): RawCrmClientEvent
+  list_raw_crm_client_events(limit: Int, cursor: String): RawCrmClientEventList!
+
+  # RawCrmAccountEvent (generated from registry metadata)
+  get_raw_crm_account_event(EVENT_ID: String!): RawCrmAccountEvent
+  list_raw_crm_account_events(limit: Int, cursor: String): RawCrmAccountEventList!
 }

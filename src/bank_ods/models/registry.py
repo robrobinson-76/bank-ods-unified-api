@@ -23,6 +23,9 @@ from .account import Account
 from .base import BankDocument
 from .cash_balance import CashBalance
 from .position import Position
+from .raw_cash_movement import RawCashMovement
+from .raw_crm_account_event import RawCrmAccountEvent
+from .raw_crm_client_event import RawCrmClientEvent
 from .raw_custody_position import RawCustodyPosition
 from .raw_vendor_security import RawVendorSecurity
 from .security import Security
@@ -41,6 +44,9 @@ ENTITIES_SEMANTIC: list[type[BankDocument]] = [
 ENTITIES_RAW: list[type[BankDocument]] = [
     RawCustodyPosition,
     RawVendorSecurity,
+    RawCashMovement,
+    RawCrmClientEvent,
+    RawCrmAccountEvent,
 ]
 
 # Every entity known to the system, regardless of exposure flags.

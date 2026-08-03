@@ -46,6 +46,30 @@ async def test_sedol_format_and_check_digit(db):
         assert int(sedol[6]) == sedol_check_digit(sedol[:6]), f"Bad check digit: {sedol}"
 
 
+async def test_isin_structure(db):
+    """ISIN is ISO 6166: 2-char country + 9-char NSIN + 1 check digit = 12 total.
+
+    Structure is asserted; the check digit is not. Unlike SEDOLs and LEIs —
+    which the seed generator computes correctly and which are verified above —
+    the ISINs here are a mix of real codes and hand-written stand-ins, so
+    check-digit validity was never a property of this dataset.
+
+    The length constraint is load-bearing rather than cosmetic: the mainframe
+    custody extract carries ISIN in a fixed 12-character field, so a longer
+    value cannot be represented on the wire at all. Two bond ISINs were seeded
+    at 13 characters until the file adapter refused to pack them.
+    """
+    securities = await db.securities.find({}, {"securityId": 1, "isin": 1}).to_list(length=None)
+    assert securities, "No securities seeded"
+    for sec in securities:
+        isin = sec.get("isin")
+        if not isin:
+            continue  # ISIN is optional (unique sparse index)
+        assert re.match(r"^[A-Z]{2}[A-Z0-9]{9}\d$", isin), (
+            f"Malformed ISIN on {sec['securityId']}: {isin!r} ({len(isin)} chars)"
+        )
+
+
 async def test_sedols_globally_unique(db):
     listings = await _all_listings(db)
     sedols = [lst["sedol"] for lst in listings]

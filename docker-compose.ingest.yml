@@ -1,0 +1,116 @@
+# ODS Ingest infrastructure overlay.
+#
+# Run together with the base ODS stack so everything shares one network:
+#   docker compose -f docker-compose.yml -f docker-compose.ingest.yml up -d
+#
+# The adapters, sink, and curation consumers deliberately run as LOCAL python
+# processes (python -m ods_ingest.*), not containers — fast dev loop and the
+# file landing directory stays a plain local path. See docs/PLAN-ingestion.md.
+services:
+  kafka:
+    image: apache/kafka:4.1.0
+    container_name: ods-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # Dual listeners: INTERNAL for containers (connect), EXTERNAL for host processes.
+      KAFKA_LISTENERS: INTERNAL://:29092,CONTROLLER://:29093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      CLUSTER_ID: ods-ingest-cluster-1
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:29092 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  # Confluent-compatible schema registry. Every client (python adapters AND the
+  # Debezium converters) talks to it so one wire format is in play: the standard
+  # Confluent one, magic byte 0x00 + 4-byte schema id + avro body.
+  #
+  # Pinned to 2.6.x deliberately. The Debezium 3.1 image ships Apicurio's 2.6.2
+  # converter, and a 3.x registry assigns content ids that the 2.x converter
+  # writes into the wire header but the ccompat API cannot resolve — python
+  # consumers then get "No content with ID … was found" on every CDC record.
+  # Matching the server to the shipped converter keeps one id space end to end.
+  schema-registry:
+    image: apicurio/apicurio-registry-mem:2.6.11.Final
+    container_name: ods-schema-registry
+    ports:
+      - "8081:8080"
+    environment:
+      QUARKUS_HTTP_CORS_ORIGINS: "*"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/apis/registry/v2/system/info || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  connect:
+    image: quay.io/debezium/connect:3.1.0.Final
+    container_name: ods-connect
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: ods-connect-cluster
+      CONFIG_STORAGE_TOPIC: _connect_configs
+      OFFSET_STORAGE_TOPIC: _connect_offsets
+      STATUS_STORAGE_TOPIC: _connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: "1"
+      OFFSET_STORAGE_REPLICATION_FACTOR: "1"
+      STATUS_STORAGE_REPLICATION_FACTOR: "1"
+      # Ships the Apicurio Avro converters into the plugin path. Combined with
+      # `apicurio.registry.as-confluent=true` in the connector config, Debezium
+      # emits the Confluent wire format that python's confluent_kafka decodes
+      # natively — no jar wrangling required.
+      ENABLE_APICURIO_CONVERTERS: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/connectors || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  # "Legacy CRM" application database — the source that only has a database.
+  # wal_level=logical is what makes Debezium's pgoutput capture possible.
+  postgres-crm:
+    image: postgres:17
+    container_name: ods-postgres-crm
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4", "-c", "max_wal_senders=4"]
+    ports:
+      # 5433 is taken by a native PostgreSQL install on the dev machine, which
+      # silently shadows the container and answers with a different database.
+      - "5434:5432"
+    environment:
+      POSTGRES_DB: crm
+      POSTGRES_USER: crm
+      POSTGRES_PASSWORD: crm
+    volumes:
+      - ./infra/crm/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - crm_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crm -d crm"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  crm_data:

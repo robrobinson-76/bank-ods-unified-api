@@ -15,6 +15,10 @@ dependencies = [
     "strawberry-graphql[fastapi]>=0.320.4",
     "graphene>=3.4.3",
     "graphene-pydantic>=0.6.1",
+    # ── ODS Ingest ──
+    "confluent-kafka>=2.5",
+    "fastavro>=1.9",
+    "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -39,7 +43,7 @@ ignore_missing_imports = true
 check_untyped_defs = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bank_ods"]
+packages = ["src/bank_ods", "src/ods_ingest"]
 
 [build-system]
 requires = ["hatchling"]

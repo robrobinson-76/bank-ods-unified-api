@@ -1,0 +1,100 @@
+{
+  "type": "record",
+  "name": "RawCustodyPosition",
+  "namespace": "ods.raw",
+  "doc": "Raw-tier feed record. Natural key: REC_ID.",
+  "fields": [
+    {
+      "name": "REC_ID",
+      "type": "string"
+    },
+    {
+      "name": "POS_REC_TYPE",
+      "type": "string"
+    },
+    {
+      "name": "POS_BUS_DATE",
+      "type": "string"
+    },
+    {
+      "name": "POS_BANK_NBR",
+      "type": "string"
+    },
+    {
+      "name": "POS_BRANCH_CD",
+      "type": "string"
+    },
+    {
+      "name": "POS_ACCT_NBR",
+      "type": "string"
+    },
+    {
+      "name": "POS_ACCT_TYPE_CD",
+      "type": "string"
+    },
+    {
+      "name": "POS_CUSIP_NBR",
+      "type": "string"
+    },
+    {
+      "name": "POS_ISIN_NBR",
+      "type": "string"
+    },
+    {
+      "name": "POS_SEC_DESC",
+      "type": "string"
+    },
+    {
+      "name": "POS_ASSET_CLS_CD",
+      "type": "string"
+    },
+    {
+      "name": "POS_REG_TYPE_CD",
+      "type": "string"
+    },
+    {
+      "name": "POS_LOC_CD",
+      "type": "string"
+    },
+    {
+      "name": "POS_SHR_QTY",
+      "type": "string"
+    },
+    {
+      "name": "POS_SHR_QTY_PEND",
+      "type": "string"
+    },
+    {
+      "name": "POS_MKT_PRICE",
+      "type": "string"
+    },
+    {
+      "name": "POS_MKT_VALUE",
+      "type": "string"
+    },
+    {
+      "name": "POS_ACCR_INT",
+      "type": "string"
+    },
+    {
+      "name": "POS_PRICE_DT",
+      "type": "string"
+    },
+    {
+      "name": "POS_LAST_ACTVY_DT",
+      "type": "string"
+    },
+    {
+      "name": "POS_PLEDGE_IND",
+      "type": "string"
+    },
+    {
+      "name": "POS_CCY_CD",
+      "type": "string"
+    },
+    {
+      "name": "POS_SRC_SYS_ID",
+      "type": "string"
+    }
+  ]
+}

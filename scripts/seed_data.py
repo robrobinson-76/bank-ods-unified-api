@@ -17,6 +17,7 @@ from faker import Faker
 import pymongo
 
 from bank_ods.services._common import custody_acct_nbr, cusip_from_isin
+from ods_ingest.curation.decode import source_timestamp_iso
 
 load_dotenv()
 
@@ -165,9 +166,9 @@ BOND_SPECS = [
     ("CA46625HBC41", None, "JPM CORP BOND 3.8% 2029","US",  "USD", 3.8,  "2029-07-23"),
     ("CA80928KAC68", None, "SCB CORP BOND 3.1% 2027","CA",  "CAD", 3.1,  "2027-11-01"),
     ("US594918BN21", None, "MSFT CORP BOND 2.9% 2052","US", "USD", 2.9,  "2052-03-17"),
-    ("US0231350AK69",None, "AMZN CORP BOND 4.1% 2031","US", "USD", 4.1,  "2031-08-01"),
+    ("US023135AK69", None, "AMZN CORP BOND 4.1% 2031","US", "USD", 4.1,  "2031-08-01"),
     ("CA89114QBP86", None, "TD CORP BOND 3.6% 2029", "CA",  "CAD", 3.6,  "2029-04-02"),
-    ("CA0641491GL05",None, "BNS CORP BOND 3.4% 2028","CA",  "CAD", 3.4,  "2028-01-23"),
+    ("CA064149GL05", None, "BNS CORP BOND 3.4% 2028","CA",  "CAD", 3.4,  "2028-01-23"),
 ]
 
 FUND_SPECS = [
@@ -667,6 +668,11 @@ def build_raw_vendor_securities(securities: list[dict]) -> list[dict]:
                 (TODAY - timedelta(days=rng.randint(1, 20))).strftime("%d-%b-%y").upper(),
             ]),
         })
+    # Loader-assigned ordering value — the vendor's LAST_UPD_TS normalised to a
+    # sortable instant, exactly as the adapters do at capture. LAST_UPD_TS
+    # arrives in several formats and cannot be compared as delivered.
+    for row in rows:
+        row["SRC_UPDATED_AT"] = source_timestamp_iso(row.get("LAST_UPD_TS"))
     # Vendor-only rows — instruments the curated master doesn't carry
     rows.append({
         "Vendor_Ref": f"VND-{len(securities) + 1:06d}",
@@ -687,6 +693,136 @@ def build_raw_vendor_securities(securities: list[dict]) -> list[dict]:
         "EXCH_CD": "N", "LAST_UPD_TS": "2025-11-30 04:12:44",
     })
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Raw tier — feeds that ODS Ingest populates in production.
+#
+# These builders seed a small, representative baseline so the registry-driven
+# parity harness has data to exercise without the Kafka stack running. The real
+# records arrive through src/ods_ingest (see docs/PLAN-ingestion.md); the
+# pipeline upserts on the same natural keys, so re-seeding and re-ingesting are
+# interchangeable rather than conflicting.
+# ---------------------------------------------------------------------------
+
+_MOV_TYPES = ["DEP", "WDL", "FEE", "INT", "DIV", "FX"]
+
+
+def build_raw_cash_movements(accounts: list[dict]) -> list[dict]:
+    """Two intraday drops of delimited cash movement rows."""
+    records = []
+    for drop_time in ("1030", "1445"):
+        cycle_dt = date_offset(1)
+        cycle = cycle_dt.strftime("%Y%m%d")
+        batch_id = f"CASHMOV_{cycle}_{drop_time}.csv"
+        seq = 0
+        for acct in accounts:
+            for _ in range(rng.randint(0, 2)):
+                seq += 1
+                mov_type = rng.choice(_MOV_TYPES)
+                amount = rng.uniform(500, 250_000)
+                # Withdrawals and fees leave the account: signed with a leading minus.
+                if mov_type in ("WDL", "FEE"):
+                    amount = -amount
+                records.append({
+                    "MOVEMENT_ID": f"{batch_id}-{seq:05d}",
+                    "MOV_FILE_DATE": cycle,
+                    "MOV_FILE_TIME": drop_time,
+                    "MOV_ACCT_NBR": custody_acct_nbr(acct["accountId"]),
+                    "MOV_CCY_CD": acct["baseCurrency"],
+                    "MOV_AMT": f"{amount:.2f}",
+                    "MOV_TYPE_CD": mov_type,
+                    "MOV_VALUE_TS": f"{cycle} {drop_time[:2]}:{drop_time[2:]}:00",
+                    "MOV_NARRATIVE": rng.choice([
+                        "CLIENT SUBSCRIPTION", "CUSTODY FEE Q3", "COUPON RECEIPT",
+                        "FX SETTLEMENT", "CASH SWEEP", "",
+                    ]),
+                    "MOV_SRC_SYS_ID": "CASHMGMT",
+                })
+    return records
+
+
+# CRM code values are the source system's own — lowercase, its own vocabulary.
+# Curation maps them to the ODS enums; nothing is normalized in the raw tier.
+_CRM_CLASSIFICATION = {
+    "RETAIL": "retail",
+    "PROFESSIONAL": "professional",
+    "ELIGIBLE_COUNTERPARTY": "eligible_counterparty",
+}
+
+
+def _crm_client_state(client: dict, updated: datetime) -> dict:
+    return {
+        "client_id": client["clientId"],
+        "client_name": client["clientName"],
+        "lei": client["lei"],
+        "country_domicile": client["countryOfDomicile"],
+        "country_incorp": client["countryOfIncorporation"],
+        "tax_residencies": ",".join(client["taxResidencies"]),
+        "classification": _CRM_CLASSIFICATION.get(client["classification"], "retail"),
+        "kyc_status": client["kycStatus"].lower(),
+        "risk_rating": client["riskRating"].lower(),
+        "legal_entity_type": client["legalEntityType"].lower(),
+        "parent_client_id": client.get("parentClientId"),
+        "updated_at": updated.isoformat(),
+    }
+
+
+def _crm_account_state(acct: dict, updated: datetime) -> dict:
+    return {
+        "account_nbr": acct["accountId"],
+        "client_id": acct["client"]["clientId"],
+        "account_name": acct["accountName"],
+        "account_type": acct["accountType"].lower(),
+        "base_ccy": acct["baseCurrency"],
+        "status": acct["status"].lower(),
+        "open_date": acct["openDate"].strftime("%Y-%m-%d"),
+        "close_date": acct["closeDate"].strftime("%Y-%m-%d") if acct.get("closeDate") else None,
+        "branch": acct["custodianBranch"],
+        "updated_at": updated.isoformat(),
+    }
+
+
+def build_raw_crm_events(accounts: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Snapshot-read (op="r") change events, as Debezium emits on first capture."""
+    updated = date_offset(1)
+    ts_ms = str(int(updated.timestamp() * 1000))
+    lsn = 24_000_000
+
+    client_events = []
+    seen_clients: set[str] = set()
+    for acct in accounts:
+        client = acct["client"]
+        if client["clientId"] in seen_clients:
+            continue
+        seen_clients.add(client["clientId"])
+        lsn += 8
+        client_events.append({
+            "EVENT_ID": f"{lsn}-clients-{client['clientId']}",
+            "OP": "r",
+            "PK": client["clientId"],
+            "LSN": str(lsn),
+            "TS_MS": ts_ms,
+            "SOURCE_TABLE": "clients",
+            "BEFORE": None,  # snapshot reads carry no prior image
+            "AFTER": _crm_client_state(client, updated),
+        })
+
+    account_events = []
+    for acct in accounts:
+        lsn += 8
+        account_events.append({
+            "EVENT_ID": f"{lsn}-accounts-{acct['accountId']}",
+            "OP": "r",
+            "PK": acct["accountId"],
+            "LSN": str(lsn),
+            "TS_MS": ts_ms,
+            "SOURCE_TABLE": "accounts",
+            "BEFORE": None,
+            "AFTER": _crm_account_state(acct, updated),
+        })
+
+    return client_events, account_events
 
 
 # ---------------------------------------------------------------------------
@@ -739,6 +875,10 @@ def main() -> None:
     raw_custody_positions = build_raw_custody_positions(accounts, securities)
     print("Building raw vendor securities...")
     raw_vendor_securities = build_raw_vendor_securities(securities)
+    print("Building raw cash movements...")
+    raw_cash_movements = build_raw_cash_movements(accounts)
+    print("Building raw CRM change events...")
+    raw_crm_client_events, raw_crm_account_events = build_raw_crm_events(accounts)
 
     collections = [
         ("accounts", accounts),
@@ -749,6 +889,9 @@ def main() -> None:
         ("cash_balances", cash_balances),
         ("raw_custody_positions", raw_custody_positions),
         ("raw_vendor_securities", raw_vendor_securities),
+        ("raw_cash_movements", raw_cash_movements),
+        ("raw_crm_client_events", raw_crm_client_events),
+        ("raw_crm_account_events", raw_crm_account_events),
     ]
 
     for name, docs in collections:

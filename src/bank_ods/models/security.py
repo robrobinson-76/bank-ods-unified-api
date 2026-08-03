@@ -56,6 +56,14 @@ class Security(BankDocument):
     UNFILTERED_LIST: ClassVar[bool] = True
 
     securityId: str
+    # High-water mark of the vendor enrichment applied to this security: the
+    # source's own last-modified timestamp, ISO 8601. The security master is fed
+    # by two channels (intraday vendor poll and the start-of-day snapshot
+    # true-up) with no ordering guarantee between them, so curation writes
+    # conditionally on this increasing. Without it, a stale snapshot record
+    # arriving after a fresh update would silently overwrite it.
+    # See docs/PATTERN-snapshot-and-stream.md.
+    vendorUpdatedAt: Optional[str] = None
     isin: Optional[str] = None
     cusip: Optional[str] = None
     ticker: Optional[str] = None

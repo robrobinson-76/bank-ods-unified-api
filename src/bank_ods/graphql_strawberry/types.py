@@ -74,6 +74,7 @@ class ListingType:
 @strawberry.experimental.pydantic.type(model=SecurityModel, name="Security")
 class SecurityType:
     securityId: auto
+    vendorUpdatedAt: auto
     isin: auto
     cusip: auto
     ticker: auto

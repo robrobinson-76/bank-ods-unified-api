@@ -30,6 +30,26 @@ class BankDocument(BaseModel):
       UNFILTERED_LIST whether the entity supports listing without required
                       filters (drives generated list fields and the baseline
                       parity tests).
+      ORDERING_FIELD  optional source-order field for LATEST-STATE entities.
+
+    On ORDERING_FIELD — raw-tier entities come in two shapes, and the difference
+    decides whether a write can lose data:
+
+      event/append shape   the natural key embeds the delivery position
+                           (REC_ID = "<cycle>-<seq>", EVENT_ID = "<lsn>-…"), so
+                           every delivery is a distinct immutable document and
+                           two channels can never overwrite one another.
+      latest-state shape   the natural key is the entity's own stable identifier
+                           (Vendor_Ref), so a redelivery REPLACES the document.
+
+    Latest-state entities fed by more than one channel — a start-of-day snapshot
+    plus an intraday stream — are exposed to arrival order: a stale snapshot
+    record landing after a fresh update would silently overwrite it. Declaring
+    ORDERING_FIELD makes the sink write conditionally on that field increasing,
+    which removes the hazard regardless of arrival order. Leave it "" for
+    event-shaped entities, where it is unnecessary.
+
+    See docs/PATTERN-snapshot-and-stream.md.
     """
 
     model_config = ConfigDict(
@@ -43,6 +63,7 @@ class BankDocument(BaseModel):
     ID_FIELD: ClassVar[str] = ""
     DEFAULT_SORT: ClassVar[list[tuple[str, int]]] = []
     UNFILTERED_LIST: ClassVar[bool] = False
+    ORDERING_FIELD: ClassVar[str] = ""
 
     @field_validator("*", mode="before")
     @classmethod

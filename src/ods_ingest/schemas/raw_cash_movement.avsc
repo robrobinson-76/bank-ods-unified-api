@@ -1,0 +1,48 @@
+{
+  "type": "record",
+  "name": "RawCashMovement",
+  "namespace": "ods.raw",
+  "doc": "Raw-tier feed record. Natural key: MOVEMENT_ID.",
+  "fields": [
+    {
+      "name": "MOVEMENT_ID",
+      "type": "string"
+    },
+    {
+      "name": "MOV_FILE_DATE",
+      "type": "string"
+    },
+    {
+      "name": "MOV_FILE_TIME",
+      "type": "string"
+    },
+    {
+      "name": "MOV_ACCT_NBR",
+      "type": "string"
+    },
+    {
+      "name": "MOV_CCY_CD",
+      "type": "string"
+    },
+    {
+      "name": "MOV_AMT",
+      "type": "string"
+    },
+    {
+      "name": "MOV_TYPE_CD",
+      "type": "string"
+    },
+    {
+      "name": "MOV_VALUE_TS",
+      "type": "string"
+    },
+    {
+      "name": "MOV_NARRATIVE",
+      "type": "string"
+    },
+    {
+      "name": "MOV_SRC_SYS_ID",
+      "type": "string"
+    }
+  ]
+}

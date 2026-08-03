@@ -1,0 +1,63 @@
+{
+  "type": "record",
+  "name": "CustodyBatchManifest",
+  "namespace": "ods.raw",
+  "doc": "Batch completeness signal for one custody extract cycle. Kafka has no native notion of 'the batch is complete'; this record is that convention. Emitted after the last detail record of a cycle is confirmed delivered.",
+  "fields": [
+    {
+      "name": "batchId",
+      "type": "string",
+      "doc": "<fileName>:<sha256[:12]> — identity of this physical delivery."
+    },
+    {
+      "name": "cycleDate",
+      "type": "string",
+      "doc": "CCYYMMDD business cycle the file represents."
+    },
+    {
+      "name": "fileName",
+      "type": "string"
+    },
+    {
+      "name": "recordCount",
+      "type": "long",
+      "doc": "Detail records produced to the topic for this batch."
+    },
+    {
+      "name": "trailerRecordCount",
+      "type": "long",
+      "doc": "Record count declared by the file's trailer, for comparison."
+    },
+    {
+      "name": "controlTotalQty",
+      "type": "string",
+      "doc": "Sum of POS_SHR_QTY as an exact decimal string."
+    },
+    {
+      "name": "controlTotalValue",
+      "type": "string",
+      "doc": "Sum of POS_MKT_VALUE as an exact decimal string."
+    },
+    {
+      "name": "status",
+      "type": "string",
+      "doc": "COMPLETE | FAILED — FAILED when control totals did not reconcile."
+    },
+    {
+      "name": "failReason",
+      "type": ["null", "string"],
+      "default": null
+    },
+    {
+      "name": "rejectedCount",
+      "type": "long",
+      "default": 0,
+      "doc": "Detail records sent to the DLQ instead of the topic."
+    },
+    {
+      "name": "extractedAt",
+      "type": "string",
+      "doc": "ISO 8601 UTC — when the adapter finished the batch."
+    }
+  ]
+}

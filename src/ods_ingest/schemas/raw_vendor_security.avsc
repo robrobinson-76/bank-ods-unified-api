@@ -1,0 +1,132 @@
+{
+  "type": "record",
+  "name": "RawVendorSecurity",
+  "namespace": "ods.raw",
+  "doc": "Raw-tier feed record. Natural key: Vendor_Ref.",
+  "fields": [
+    {
+      "name": "Vendor_Ref",
+      "type": "string"
+    },
+    {
+      "name": "SRC_UPDATED_AT",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "Cusip",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "ISIN_CODE",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "sedol",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "TICKER",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "SecurityDesc",
+      "type": "string"
+    },
+    {
+      "name": "Issuer_Name",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "ASSET_CLS",
+      "type": "string"
+    },
+    {
+      "name": "CPN_RATE",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "MATURITY_DT",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "CCY",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "CNTRY_DOM",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "CALLABLE_FLG",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "ISSUE_STATUS",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "EXCH_CD",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    },
+    {
+      "name": "LAST_UPD_TS",
+      "type": [
+        "null",
+        "string"
+      ],
+      "default": null
+    }
+  ]
+}
