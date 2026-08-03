@@ -7,7 +7,7 @@ This guide covers how AI agents (Claude Code or any MCP-capable client) should i
 There are **two MCP servers with distinct personas**, both read-only, both delegating to `bank_ods.services.*` — the same functions called by the REST and GraphQL APIs:
 
 - **`bank-ods` (consumer persona)** — 18 clean semantic domain tools across six domains, for AI agents, chatbot integrations, and downstream application teams. Productionized alongside REST and GraphQL.
-- **`bank-ods-ops` (operations persona)** — for engineers, QA, support, and release-monitoring agents: 8 operational tools (health, collection stats, recent-document inspection, raw-record field search, raw-vs-curated reconciliation, in-process logs, composite release checks) plus 4 registry-generated raw-tier tools (12 tools total). Raw inspection is this server's purpose, so its raw tools are always present regardless of `EXPOSE_RAW_TIER` (that flag governs the consumer transports). Internal-only by intent — never wired into consumer-facing clients.
+- **`bank-ods-ops` (operations persona)** — for engineers, QA, support, and release-monitoring agents: 13 operational tools (health, collection stats, recent-document inspection, raw-record field search, raw-vs-curated reconciliation for three feeds, ingestion status, dead-letter summary, batch history, in-process logs, composite release checks) plus 10 registry-generated raw-tier tools (23 tools total). Raw inspection is this server's purpose, so its raw tools are always present regardless of `EXPOSE_RAW_TIER` (that flag governs the consumer transports). Internal-only by intent — never wired into consumer-facing clients.
 
 Pick the server by task: answering business questions about accounts/positions/settlements → `bank-ods`; investigating *why the data looks wrong*, feed drift, or verifying a release → `bank-ods-ops`.
 
@@ -342,9 +342,49 @@ Newest-first entries from this process's in-memory log ring. Process-local by de
 
 #### `run_release_checks`
 
-No parameters. Composite post-release verification: database reachability, per-collection population, raw feed freshness, and custody reconciliation, rolled up to `{status: PASS|WARN|FAIL, checks: [{name, status, detail}]}`.
+No parameters. Composite post-release verification: database reachability, per-collection population, custody feed freshness and reconciliation, per-feed ingestion freshness, and dead-letter counts — rolled up to `{status: PASS|WARN|FAIL, checks: [{name, status, detail}]}`.
 
-**For release-monitoring agents:** poll after a deployment until `PASS`; alert on `FAIL`, or on a `WARN` that persists across polls. Use the per-check `detail` to decide which investigation tool to call next (`reconcile_custody_feed` for reconciliation warnings, `list_collections` for population failures, `get_recent_logs` for anything unexplained).
+Check names: `database_reachable`, `collections_populated`, `custody_feed_freshness`, `custody_reconciliation`, `feed_freshness`, `dlq_empty`.
+
+**For release-monitoring agents:** poll after a deployment until `PASS`; alert on `FAIL`, or on a `WARN` that persists across polls. Use the per-check `detail` to decide which investigation tool to call next (`reconcile_custody_feed` for reconciliation warnings, `get_ingestion_status` for a stale feed, `get_dlq_summary` for dead-letters, `list_collections` for population failures, `get_recent_logs` for anything unexplained).
+
+### Ingestion tools
+
+The write side (`src/ods_ingest`) records its own operational state in the `ingest_state` collection; these tools read it. They never talk to Kafka — live broker lag is the platform's concern, not the ODS's — so they answer "did data arrive and was any of it rejected?", not "what is the consumer group offset right now".
+
+#### `get_ingestion_status`
+
+No parameters. Per-feed landing status: `{data: [{topic, collection, recordsLanded, lastLandedAt, ageHours, maxAgeHours, status}], watermarks: [...]}`.
+
+`status` is `CURRENT`, `STALE` (older than that feed's expected cadence — 30h for the nightly custody cycle, 8h for intraday cash, 26h for the daily vendor and CRM feeds), or `NEVER_LANDED`. Every declared feed is listed, including ones that have never delivered — a feed that was never wired up is exactly what this should surface.
+
+**Start here** for "is feed X alive?".
+
+#### `get_dlq_summary`
+
+No parameters. Returns `{data: [{topic, count, lastError, lastErrorAt, samples}], totalDeadLettered}`.
+
+A non-zero count means records were rejected by the sink or a curator — a schema they could not be decoded against, or a document that failed its raw-model contract. The original bytes are parked on the matching `ods.dlq.*` topic and can be replayed once the cause is fixed, so this is a triage signal, not a data-loss report.
+
+#### `get_batch_history`
+
+**Parameters:** `limit: int` *(optional, default 10, max 50)*
+
+Recent file-batch cycles, newest first: `{data: [{batchId, fileName, cycleDate, recordCount, status, failReason, updatedAt}]}`.
+
+`status` is `COMPLETE` (the file reconciled against its own trailer's control totals and was produced to the bus) or `FAILED` (it did not reconcile, was quarantined, and **nothing was produced from it** — a partial cycle never reaches consumers). Answers "did last night's cycle close cleanly?".
+
+#### `reconcile_crm_accounts`
+
+No parameters. The CDC counterpart of `reconcile_custody_feed`: traces the CRM change log into curated accounts.
+
+**Returns:** `{accountsInChangeLog, matched, unmatched, issues: [{accountNbr, reason, ...}]}` where `reason` is `MISSING` (captured but never curated), `STATUS_MISMATCH` (including a source delete that did not become a soft delete), or `STALE_CLIENT_EMBED` (the account carries an older client-master snapshot than the change log holds — the client fan-out did not complete).
+
+#### `reconcile_vendor_securities`
+
+No parameters. Compares landed vendor rows against the curated security master.
+
+**Returns:** `{vendorRows, matched, unmatched, issues: [{vendorRef, reason, description, cusip, isin, sedol}]}`. The only reason is `UNMATCHED_VENDOR_RECORD`, and it is **expected**: the vendor carries instruments this ODS does not, and curation deliberately never invents a security from a vendor feed. A sudden jump in the unmatched count is the signal worth acting on, not its existence.
 
 ### Raw tier (registry-generated tool group)
 
@@ -370,6 +410,29 @@ Bespoke third-party instrument reference feed, one document per delivered row.
 **Parameters:** `list_…` takes `limit` / `cursor`; `get_…` takes `record_id: str` — the `Vendor_Ref` field, e.g. `"VND-000117"`.
 
 **Value conventions (as-delivered, unnormalized):** identifiers may be missing, `"N/A"`, or `"#N/A"`; `Cusip` may have lost a leading zero; `ASSET_CLS` mixes code-list generations (`"EQ"`, `"Equity"`, `"COM"`, `"1"`); numbers are string-encoded; dates mix `CCYYMMDD`, `MM/DD/YYYY`, and sentinels (`"99991231"` perpetual, `"00000000"`); country/currency codes drift (`"US"`/`"USA"`/`"UNITED STATES"`, `"usd"`). Only `Vendor_Ref` is guaranteed unique — treat everything else as needing validation before use.
+
+#### `list_raw_cash_movements` / `get_raw_cash_movement`
+
+Intraday cash movement drops (delimited, several per business day), one document per row.
+
+**Parameters:** `list_…` takes `limit` / `cursor`; `get_…` takes `record_id: str` — the `MOVEMENT_ID` field, `"<batchId>-<sequence>"`.
+
+**Value conventions:** `MOV_AMT` is a plain signed decimal string (`"-1234.56"`) — a **leading minus**, not a zoned overpunch, because this feed is delimited rather than fixed-width. `MOV_FILE_DATE` (`CCYYMMDD`) and `MOV_FILE_TIME` (`HHMM`) come from the drop's file name; the rows themselves never state which drop they belong to. `MOV_VALUE_TS` is the source's own `"CCYYMMDD HH:MM:SS"`, not ISO 8601. `MOV_TYPE_CD` is the legacy code list: `DEP`/`WDL`/`FEE`/`INT`/`DIV`/`FX`.
+
+#### `list_raw_crm_client_events` / `get_raw_crm_client_event` and `list_raw_crm_account_events` / `get_raw_crm_account_event`
+
+Change-data-capture logs from the legacy CRM database. **These are append-only event logs, not current-state tables** — an update writes a new document rather than replacing the previous one, so the full history and every delete survive here even after the 7-day topic retention closes.
+
+**Parameters:** `list_…` takes `limit` / `cursor`; `get_…` takes `record_id: str` — the `EVENT_ID` field, `"<LSN>-<table>-<primary key>"`.
+
+**Reading an event:**
+
+- `OP` is the operation: `"r"` (snapshot read), `"c"` (create), `"u"` (update), `"d"` (delete).
+- `BEFORE` is null on inserts and snapshot reads; `AFTER` is null on deletes. Both images are complete, because the source tables are `REPLICA IDENTITY FULL`.
+- `LSN` is the Postgres log sequence number — **sort by it to order changes**, not by insertion order into Mongo.
+- Nested `BEFORE`/`AFTER` carry the source's own lowercase column names and code values (`"professional"`, `"approved"`, `"active"`), all as strings. Curation maps them to the ODS enums; nothing is normalized here.
+
+**To get the current state of a CRM row**, take the highest `LSN` for that `PK` — or just read the curated `accounts` collection, which is what curation maintains.
 
 ---
 
@@ -529,6 +592,24 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 3. get_recent_logs(level="WARNING")            → loader/service errors in this process
 ```
 
+### Feed health triage: "is ingestion broken?" (ops server)
+
+```
+1. get_ingestion_status()                      → which feed is STALE or NEVER_LANDED
+2. get_dlq_summary()                           → were records rejected, and with what error?
+     non-zero count → the feed IS arriving but records are failing the contract;
+                      lastError distinguishes a decode failure from a model violation
+     zero + STALE   → nothing is arriving; the adapter or source is the problem
+3. For a file feed: get_batch_history()        → did the cycle close COMPLETE, or was the
+                                                 file quarantined (FAILED + failReason)?
+4. Then the matching reconciler for what did land:
+     reconcile_custody_feed / reconcile_crm_accounts / reconcile_vendor_securities
+```
+
+The distinction that matters: **STALE means nothing arrived; a non-empty DLQ means
+things arrived and were rejected.** They have different causes and different fixes,
+and a feed can be perfectly fresh while quietly dead-lettering everything.
+
 ### Raw records for a specific account (ops server)
 
 ```
@@ -593,6 +674,21 @@ Rules:
 | `bank_ods.graphql.app` | `app = create_app()` — uvicorn import target |
 | `bank_ods.graphql.sdl` | `generate_sdl()` — called once at startup |
 | `bank_ods.graphql.resolvers` | `query = QueryType()` — thin resolvers only |
+
+The write side is a separate package. It may import `bank_ods`; `bank_ods` must never import it.
+
+| Module path | Role |
+|---|---|
+| `ods_ingest.topics` | `TopicSpec` table — the single place a feed is declared |
+| `ods_ingest.envelope` | Canonical Kafka header codec |
+| `ods_ingest.state` | `ingest_state` accessors — watermarks, batch ledger, heartbeats, DLQ counters |
+| `ods_ingest.schemas` | Checked-in `.avsc` contracts + derivation from the raw models |
+| `ods_ingest.bus.*` | `admin` (topics/schemas), `producer`, `consumer` loop, `dlq` |
+| `ods_ingest.sink.*` | Registry-driven Kafka→Mongo landing; `writer.handle` is the entry point |
+| `ods_ingest.adapters.file.*` | Fixed-width EOD custody + delimited intraday cash |
+| `ods_ingest.adapters.rest_poll.*` | Watermark polling of the vendor SaaS |
+| `ods_ingest.curation.*` | Raw topics → semantic tier; all domain judgement lives here |
+| `ods_ingest.stub_saas` | Stand-in vendor API over a fixed JSON dataset |
 
 ### Naming Conventions
 

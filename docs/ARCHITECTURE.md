@@ -83,11 +83,25 @@ This is a local development prototype, not a production system.
                                 │
                        ┌────────▼────────┐
                        │   MongoDB 7.0   │
-                       │  8 collections  │
+                       │ 11 collections  │
                        │  (6 semantic +  │
-                       │   2 raw tier)   │
+                       │   5 raw tier)   │
+                       │  + ingest_state │
+                       └────────▲────────┘
+                                │ writes
+                       ┌────────┴────────┐
+                       │   ODS Ingest    │
+                       │  src/ods_ingest │
+                       │ adapters → Kafka│
+                       │ → sink → curate │
                        └─────────────────┘
 ```
+
+The read side above is fed by **ODS Ingest**, a separate component that adapts
+legacy sources into the ODS via a Kafka/Avro bus. It is the sanctioned writer
+of the fed collections; the transports stay read-only, and `bank_ods` never
+imports `ods_ingest`. See [ARCHITECTURE-ingestion.md](ARCHITECTURE-ingestion.md)
+for its design and [PLAN-ingestion.md](PLAN-ingestion.md) for what was built.
 
 ---
 
@@ -190,8 +204,38 @@ mongo-mcp-test/
 │           ├── sdl.py              ← Dynamic SDL from active_entities(); raw query fields generated from metadata
 │           └── resolvers.py        ← semantic QueryType resolvers + registry-generated raw resolvers
 │
+├── src/
+│   └── ods_ingest/                 ← WRITE SIDE — see ARCHITECTURE-ingestion.md
+│       ├── config.py               ← KAFKA_BOOTSTRAP_SERVERS, SCHEMA_REGISTRY_URL, dirs, poll settings
+│       ├── topics.py               ← TopicSpec table: topic → raw model, partitions, extractor, DLQ
+│       ├── envelope.py             ← canonical Kafka headers (sourceSystem, batchId, recordSeq…)
+│       ├── state.py                ← ingest_state: watermarks, batch ledger, heartbeats, DLQ counters
+│       ├── schemas/                ← checked-in .avsc wire contracts (+ derivation from raw models)
+│       ├── bus/                    ← admin (topics+schemas), producer, consumer loop, DLQ
+│       ├── sink/                   ← registry-driven Kafka→Mongo landing (mapping, extractors, writer)
+│       ├── adapters/
+│       │   ├── file/               ← fixed-width EOD custody + delimited intraday cash
+│       │   ├── rest_poll/          ← watermark polling of the vendor SaaS
+│       │   └── snapshot/           ← full-population true-up; sort-merge delta against
+│       │                              a retained key index, emits only what changed
+│       ├── curation/               ← raw topics → semantic tier (decode, resolve, per-entity curators)
+│       └── stub_saas/              ← stand-in vendor API over a fixed JSON dataset
+│
+├── infra/
+│   └── crm/init.sql                ← legacy CRM schema (REPLICA IDENTITY FULL, publication)
+├── docker-compose.ingest.yml       ← kafka, schema registry, kafka connect, postgres CRM
+│
 ├── scripts/
-│   └── seed_data.py                ← Loads ~5,200 realistic documents using faker (seed=42)
+│   ├── seed_data.py                ← Loads ~5,300 realistic documents using faker (seed=42)
+│   ├── generate_custody_file.py    ← fixed-width EOD extract generator (up to 1M records)
+│   ├── generate_cash_movements.py  ← intraday cash drop generator
+│   ├── generate_vendor_dataset.py  ← builds the stub SaaS's fixed dataset
+│   ├── crm_seed.py                 ← loads the CRM from the seeded ODS accounts
+│   ├── crm_mutate.py               ← named CRM change scenarios (insert/update/delete/churn/DDL)
+│   ├── register_cdc_connector.py   ← Debezium connector lifecycle incl. --reset
+│   ├── regen_avro_schemas.py       ← regenerate .avsc contracts from the raw models
+│   ├── bulk_load_custody.py        ← benchmark path B: direct pymongo bulk load
+│   └── benchmark_file_ingest.py    ← bus vs. bulk benchmark orchestration
 │
 ├── tests/
 │   ├── conftest.py                 ← Session-scoped fixtures: db, first_account, rest_client, gql_client
@@ -249,7 +293,9 @@ Two things deliberately iterate the full `ENTITIES` list, independent of the tie
 - `db/indexes.py` → `ensure_indexes()` creates indexes for every registered collection — indexes track the physical collections (which the loader always writes), not what a deployment exposes; gating them would leave written-and-queried collections unindexed
 - `mcp_ops/server.py` → the operations MCP server always registers the raw tool group (`mcp/raw_tools.py`) and its operational tools read every registered collection — raw feed inspection is that server's purpose
 
-Models carry access metadata as class variables: `ID_FIELD` (natural key for get-by-id), `DEFAULT_SORT` (stable unfiltered listing order), and `UNFILTERED_LIST` (whether listing without filters is supported). Operation names derive from one place — `get_field_name()` / `list_field_name()` — so the same entity carries the same names in SDL, MCP, REST, and tests.
+Models carry access metadata as class variables: `ID_FIELD` (natural key for get-by-id), `DEFAULT_SORT` (stable unfiltered listing order), `UNFILTERED_LIST` (whether listing without filters is supported), and `ORDERING_FIELD` (optional; see below).
+
+`ORDERING_FIELD` distinguishes the two shapes a raw entity can take. **Event-shaped** entities key on the delivery position (`REC_ID` = cycle + sequence, `EVENT_ID` = LSN + table + key), so every delivery is a distinct immutable document and nothing can overwrite anything. **Latest-state** entities key on the entity's own stable identifier (`Vendor_Ref`), so a redelivery replaces the document — and if the entity is fed by more than one channel, arrival order becomes a correctness concern. Declaring `ORDERING_FIELD` makes the sink write conditionally on that field increasing, so a stale record arriving after a newer one is a no-op rather than a silent overwrite. See [PATTERN-snapshot-and-stream.md](PATTERN-snapshot-and-stream.md). Operation names derive from one place — `get_field_name()` / `list_field_name()` — so the same entity carries the same names in SDL, MCP, REST, and tests.
 
 Adding a raw entity only requires adding the model to `ENTITIES_RAW` and seeding it: indexes, SDL fields, resolvers, REST routes, MCP tools, and baseline parity tests all pick it up automatically. Semantic entities keep curated query surfaces (filter arguments, composite keys) in their per-entity service/transport modules.
 
@@ -490,6 +536,33 @@ Indexes: `settlementId` (unique), `transactionId`, `(accountId, settlementDate)`
 `snapshotType`: EOD | INTRADAY  
 Indexes: `(accountId, currency, asOfDate)` compound unique, `asOfDate`
 
+#### Raw-tier collections
+
+Five collections hold feed records exactly as received; field names and
+wire-format string values are the source's, and every interpretation happens in
+curation. See each model's docstring for its conventions.
+
+| Collection | Source | Natural key | Shape |
+|---|---|---|---|
+| `raw_custody_positions` | Nightly mainframe custody extract (fixed-width) | `REC_ID` = `<cycle>-<seq>` | One document per detail record; zoned decimals, sign overpunch, julian dates |
+| `raw_vendor_securities` | Vendor security master (REST) | `Vendor_Ref` | One per delivered row; inconsistent identifiers and code-list generations |
+| `raw_cash_movements` | Intraday cash drops (delimited) | `MOVEMENT_ID` = `<batchId>-<seq>` | One per row; plain signed decimals, business date/time from the file name |
+| `raw_crm_client_events` | CRM database via Debezium | `EVENT_ID` = `<LSN>-clients-<pk>` | **Append-only change log**: `OP`, `LSN`, nested `BEFORE`/`AFTER` row images |
+| `raw_crm_account_events` | CRM database via Debezium | `EVENT_ID` = `<LSN>-accounts-<pk>` | Same shape, `accounts` table |
+
+The two CRM collections are change **logs**, not latest-state mirrors: an
+update appends a new document, so history and deletes survive in the raw tier
+past the bus's 7-day retention. Current state is the highest `LSN` per `PK` —
+or simply the curated `accounts` collection.
+
+### Operational state — `ingest_state`
+
+One collection outside the entity registry, written by `ods_ingest` and served
+by no transport: REST poller watermarks, the processed-file batch ledger with
+its manifests, per-topic sink heartbeats, and DLQ counters. It exists so ops
+tooling can answer "is this feed alive and current?" from Mongo alone — the
+ODS never connects to Kafka.
+
 ### Temporal Data Pattern
 
 Positions and cash balances are **append-only snapshots**, not in-place updates. Each EOD creates a new document. This preserves history and makes time-range queries straightforward.
@@ -614,9 +687,14 @@ The MCP surface splits into two servers with different audiences, tool sets, and
   - `find_raw_records(collection, field, value)` — exact-match search over a raw collection by any feed field ("show me the raw records for account X"); field names validated against the model, raw-tier collections only
   - `reconcile_custody_feed(cycle_date?)` — traces a raw batch cycle into curated positions; classifies every unmatched record as UNKNOWN_ACCOUNT / UNKNOWN_SECURITY / NO_CURATED_POSITION ("why didn't this record appear?")
   - `get_recent_logs(level, limit)` — in-process log ring buffer (`logging_config.RingBufferHandler`); process-local by design, the platform log aggregator owns cross-process search
-  - `run_release_checks` — composite PASS/WARN/FAIL rollup (reachability, population, feed freshness, reconciliation) designed for an AI agent monitoring a release to poll until PASS
-  - Plus the registry-generated raw tool group (`get_raw_custody_position`, `list_raw_custody_positions`, `get_raw_vendor_security`, `list_raw_vendor_securities`), always registered here — raw feed inspection is an engineering activity, not a consumer one, so it is not subject to `EXPOSE_RAW_TIER` (which governs the consumer transports)
-  - Full ops tool surface: 8 operational tools + 4 raw tools = 12
+  - `get_ingestion_status` — per-feed landing status from `ingest_state`: last delivery, records landed, CURRENT / STALE / NEVER_LANDED against each feed's cadence, plus the REST poller's watermark
+  - `get_dlq_summary` — dead-lettered counts per feed with the most recent error and samples; the original bytes stay on the `ods.dlq.*` topics for replay
+  - `get_batch_history(limit)` — recent file-batch cycles and whether their control totals reconciled (COMPLETE) or the file was quarantined (FAILED)
+  - `reconcile_crm_accounts` — the CDC counterpart of `reconcile_custody_feed`: MISSING / STATUS_MISMATCH / STALE_CLIENT_EMBED per account in the change log
+  - `reconcile_vendor_securities` — landed vendor rows vs. the curated master; unmatched rows are reported, not failed
+  - `run_release_checks` — composite PASS/WARN/FAIL rollup (reachability, population, custody feed freshness and reconciliation, per-feed ingestion freshness, DLQ empty) designed for an AI agent monitoring a release to poll until PASS
+  - Plus the registry-generated raw tool group — a get + list tool for each of the five raw entities (`get_raw_custody_position` / `list_raw_custody_positions`, and the same for vendor securities, cash movements, and the two CRM change logs) — always registered here, because raw feed inspection is an engineering activity, not a consumer one, so it is not subject to `EXPOSE_RAW_TIER` (which governs the consumer transports)
+  - Full ops tool surface: 13 operational tools + 10 registry-generated raw tools = 23
 
 Both servers share the same service layer; the ops server adds operational tools that have no consumer equivalent. Transport for both: `MCP_TRANSPORT` env var (`stdio` default; `sse` for K8s). Startup: `ensure_indexes()` via lifespan; the ops server also attaches the log ring.
 
@@ -675,6 +753,15 @@ Two additional implementations of the identical GraphQL contract, built to evalu
 | cash_balances | (accountId, currency, asOfDate) compound unique, asOfDate |
 | raw_custody_positions | REC_ID (unique), (POS_BUS_DATE, POS_ACCT_NBR), POS_CUSIP_NBR |
 | raw_vendor_securities | Vendor_Ref (unique), Cusip (sparse) |
+| raw_cash_movements | MOVEMENT_ID (unique), (MOV_FILE_DATE, MOV_ACCT_NBR), MOV_ACCT_NBR |
+| raw_crm_client_events | EVENT_ID (unique), (PK, LSN), OP |
+| raw_crm_account_events | EVENT_ID (unique), (PK, LSN), OP |
+
+Every raw-tier natural key is deterministic and derivable from source content
+(`REC_ID` from cycle + sequence, `EVENT_ID` from LSN + table + primary key).
+That is what makes the at-least-once ingestion path idempotent: re-delivering a
+file, replaying a topic, or re-running a CDC snapshot upserts onto the same
+documents instead of duplicating them.
 
 The compound unique index on `positions` and `cash_balances` enforces the append-only snapshot invariant: only one document per (account, security/currency, date).
 
@@ -700,8 +787,29 @@ Tests require a running MongoDB with seeded data (`python scripts/seed_data.py`)
 | `test_protection.py` | Query protection (depth/alias limits, introspection toggle) + SDL snapshot guard |
 | `test_master_data.py` | Reference-data integrity — SEDOL/LEI format + check digits, global SEDOL uniqueness, one primary listing per security, identical client-master snapshot across a client's accounts, parentClientId links resolve |
 | `test_strawberry_parity.py`, `test_graphene_parity.py` | Evaluation twins — see REVIEW-strawberry-graphql.md |
+| `test_schema_contract.py` | Wire-contract governance — each `.avsc` matches the raw model it lands, natural key present and non-nullable, Avro round-trip, CDC subjects left to Debezium |
+| `test_snapshot_diff.py` | Sort-merge delta (added/changed/removed/unchanged, delete-by-absence, unsorted-input rejection, atomic index write) and vendor timestamp normalisation |
+| `test_ingest_boundaries.py` | Import-direction invariants — `bank_ods` never imports `ods_ingest`; adapters never import `bank_ods` (so an adapter stays extractable) |
+| `test_envelope.py` | Canonical ingestion header codec, including records this codebase did not produce |
+| `test_fixed_width.py` | Copybook layout and wire-format decoding — zoned decimal, sign overpunch, julian dates, exactness under Decimal |
 
-172 tests total. All must pass before merge.
+**245 core tests.** All must pass before merge.
+
+### Two test tiers
+
+The core suite above needs only MongoDB and stays fast (a few seconds). The
+ingestion end-to-end tests need the full compose stack, so they carry an
+`ingest` marker and **auto-skip** when it is not running:
+
+| Tier | Command | Requires |
+|---|---|---|
+| Core (the merge gate) | `pytest tests/ -m "not ingest"` | MongoDB + seeded data |
+| Ingestion e2e | `pytest tests/ -m ingest` | Kafka, schema registry, Connect, Postgres CRM |
+
+`tests/ingest/` holds 29 end-to-end tests — one module per flow (file, CDC,
+REST, cash) — each driving the real adapters, sink, and curators against the
+real stack. Run them for any change under `src/ods_ingest/`, `infra/`, or the
+compose overlay.
 
 ### Parity Test Pattern
 
@@ -738,6 +846,16 @@ The parity harness is the primary contract enforcement mechanism.
 | settlements | 1,800 | One per trade transaction; full statusHistory |
 | positions | 1,000 | EOD snapshots; account × security × date |
 | cash_balances | 400 | EOD snapshots; account × currency (CAD/USD) × 10 days |
+| raw_custody_positions | 120 | Two nightly cycles of fixed-width detail records |
+| raw_vendor_securities | 52 | One as-received vendor row per instrument, plus vendor-only rows |
+| raw_cash_movements | ~40 | Two intraday drops of delimited movement rows |
+| raw_crm_client_events | 10 | Snapshot-read (`OP: "r"`) change events, one per client |
+| raw_crm_account_events | 20 | Snapshot-read change events, one per account |
+
+The raw-tier rows are a baseline so the registry-driven parity harness has data
+without the ingestion stack running. ODS Ingest writes the same collections
+with the same natural keys, so re-seeding and re-ingesting are interchangeable
+rather than conflicting.
 
 ---
 
@@ -766,6 +884,14 @@ The parity harness is the primary contract enforcement mechanism.
 **Why fastmcp over the raw MCP SDK?** fastmcp removes boilerplate: JSON schema generation from type hints, transport setup, lifespan management.
 
 **No MongoDB auth.** Local-only prototype. Do not add auth — it is unnecessary and complicates local setup.
+
+**Ingestion is a separate component, one-way coupled.** `ods_ingest` imports `bank_ods` (models, registry, logging) and never the reverse, so the read side stays independent of how data arrives and can be reasoned about — and tested — without any of the bus. The two share exactly two things: the raw-tier models, which are the landing contract, and MongoDB, where Ingest is the sanctioned writer and the transports stay read-only. Everything else about a source (its protocol, its wire format, its idea of a delete) stops at the adapter.
+
+**Adapters are mechanical; curation makes the judgements.** An adapter captures what the source said, verbatim, into a typed record. Every decision — decoding a zoned decimal, resolving a mainframe account number to an `accountId`, mapping a source's code list to a domain enum, deciding what a delete means — lives in `ods_ingest/curation/`. The payoff is that a mapping bug is fixed by replaying the raw tier rather than re-requesting the file from a system that may no longer have it, and each rule is unit-testable without Kafka.
+
+**Idempotent writes on natural keys, everywhere.** Delivery is at-least-once at every hop: Debezium re-emits after a restart, a file can be re-dropped, a poller re-reads its overlap window, a consumer group can be replayed. Rather than chase exactly-once, every write is an upsert on a key derived from source content — `REC_ID`, `EVENT_ID`, `Vendor_Ref`, or a semantic compound key. That makes every one of those events a no-op instead of a duplicate, and makes "replay the topic" a safe operational tool rather than a risk.
+
+**Soft deletes.** A source delete becomes a status transition (`CLOSED`, `DELISTED`) in the semantic tier; documents are never physically removed, and the delete event itself is retained in the raw tier. Physical deletion would be a new and dangerous semantic for a read-only view whose value is its history.
 
 ---
 
@@ -799,6 +925,24 @@ Each HTTP request produces:
 | `TRANSPORT_MCP_OPS_ENABLED` | `true` | Operations MCP server (`bank-ods-ops`) startup gate |
 | `EXPOSE_SEMANTIC_TIER` | `true` | Expose semantic-tier entities on the consumer transports (SDL fields, REST routers, semantic MCP tools) |
 | `EXPOSE_RAW_TIER` | `true` | Expose raw-tier entities on the consumer transports; the ops server exposes raw regardless |
+
+### ODS Ingest (`src/ods_ingest`)
+
+| Variable | Default | Description |
+|---|---|---|
+| `KAFKA_BOOTSTRAP_SERVERS` | `localhost:9092` | Bus endpoint for adapters, sink, and curators |
+| `SCHEMA_REGISTRY_URL` | `http://localhost:8081/apis/ccompat/v7` | Confluent-compatible registry API — the one wire format shared with Debezium |
+| `TOPIC_RETENTION_MS` | `604800000` | 7-day replay window on raw topics |
+| `INGEST_DATA_ROOT` | `./data/ingest` | Root for the landing / archive / quarantine directories |
+| `FILE_POLL_INTERVAL_S` | `5` | Landing-directory poll interval |
+| `SAAS_BASE_URL` | `http://localhost:8010` | Stub vendor SaaS |
+| `POLL_INTERVAL_S` | `30` | REST adapter poll interval |
+| `POLL_OVERLAP_S` | `60` | Re-requested window before the watermark, absorbed by idempotent upsert |
+| `SAAS_PAGE_SIZE` | `50` | Page size for the vendor API walk |
+| `CRM_DSN` | `postgresql://crm:crm@localhost:5434/crm` | Legacy CRM database (5434 avoids a native PostgreSQL on 5433) |
+| `CONNECT_URL` | `http://localhost:8083` | Kafka Connect REST API |
+| `CONSUMER_BATCH_SIZE` | `500` | Records per consume→write→commit cycle |
+| `CONSUMER_IDLE_TIMEOUT_S` | `5.0` | How long a one-shot run waits with no records before declaring the backlog drained |
 
 Copy `.env.example` to `.env` before running locally.
 
