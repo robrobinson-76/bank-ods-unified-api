@@ -8,7 +8,7 @@ The domain is a simplified custodian bank ODS (accounts, positions, transactions
 
 ## The Pattern
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │  Pydantic Models  (models/)                      │
 │  Single source of truth for fields and types     │
@@ -86,7 +86,7 @@ Copy `.env.example` to `.env` before running.
 
 ## Project Structure
 
-```
+```text
 src/bank_ods/
 ├── models/          Pydantic v2 entity models + ENTITIES registry
 ├── db/              Motor client + ensure_indexes()
@@ -143,7 +143,7 @@ Tools appear as `mcp__bank-ods__get_account`, `mcp__bank-ods__get_transactions`,
 
 ### REST
 
-```
+```text
 GET /accounts/{id}
 GET /securities?asset_class=&ticker=&status=
 GET /transactions?account_id=&from_date=&to_date=
@@ -205,6 +205,7 @@ class Transaction(BankDocument):
 `ENTITIES = [Account, Security, Transaction, Position, Settlement, CashBalance]`
 
 At startup:
+
 - `db/indexes.py` iterates `ENTITIES` and calls `ensure_indexes()` — idempotent
 - `graphql/sdl.py` introspects field annotations and generates the full SDL — no `.graphql` file needed
 

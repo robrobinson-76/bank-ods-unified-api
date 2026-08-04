@@ -67,7 +67,7 @@ is exactly the knowledge the source system's team has and the ODS team does not.
 **The prototype already has this boundary in the right place**, verifiable
 mechanically:
 
-```
+```text
 $ grep -r "from bank_ods" src/ods_ingest/
   topics.py            ← the contract layer (raw models)
   schemas/__init__.py  ← the contract layer

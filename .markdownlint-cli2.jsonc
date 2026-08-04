@@ -1,0 +1,39 @@
+// Markdown lint configuration for this repository's docs.
+//
+// The defaults flag ~1,300 issues across docs/, the large majority of them
+// stylistic preferences this project has deliberately not followed. The rules
+// disabled below are choices; everything else is left on and the docs are kept
+// clean against it.
+{
+  "config": {
+    "default": true,
+
+    // Prose is soft-wrapped at roughly 80 columns by hand, but tables,
+    // reference URLs, and the architecture diagrams legitimately exceed it and
+    // cannot be wrapped without harming readability. Enforcing a hard limit
+    // would mean reflowing every document to satisfy a preference nobody set.
+    "MD013": false,
+
+    // Repeated section names under DIFFERENT parents are intentional and
+    // useful — several findings documents have their own "Recommendation" and
+    // "Method" sections. Duplicates under the SAME parent are still errors,
+    // because those genuinely break anchor links.
+    "MD024": { "siblings_only": true },
+
+    // Tables are written padded (`| a | b |`), including the delimiter row.
+    "MD060": { "style": "padded" }
+  },
+  // The PLAN-*.md documents are frozen reference artefacts — CLAUDE.md marks
+  // them "reference only, do not modify", because they record what was planned
+  // at a point in time. They are excluded rather than reformatted, so that
+  // rule stays true even for cosmetic fixes.
+  "globs": [
+    "**/*.md",
+    "!docs/PLAN.md",
+    "!docs/PLAN-multilayer.md",
+    "!docs/PLAN-k8s-scalability.md",
+    "!docs/PLAN-ingestion.md",
+    "!.venv",
+    "!node_modules"
+  ]
+}

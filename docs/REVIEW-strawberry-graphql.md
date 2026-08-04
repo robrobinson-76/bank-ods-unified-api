@@ -69,7 +69,7 @@ Strawberry's Pydantic support lives in `strawberry.experimental.pydantic` — th
 
 `@strawberry.experimental.pydantic.type(model=Account, all_fields=True)` **fails at schema build** with:
 
-```
+```text
 TypeError: fields cannot be resolved. Unexpected type 'typing.Literal['DVP', 'FOP', 'RVP', 'RFP']'
 ```
 

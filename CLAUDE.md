@@ -37,7 +37,7 @@ Read `ARCHITECTURE.md` for codebase orientation. Read `AGENTS.md` before writing
 
 ## Target directory
 
-```
+```text
 C:\dev\clio-git\mongo-mcp-test\
 ```
 

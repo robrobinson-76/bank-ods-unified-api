@@ -1,0 +1,26 @@
+# Normalise line endings so the repository content is stable regardless of the
+# platform a contributor is on. Without this, Git falls back to core.autocrlf
+# and every commit from Windows reports "LF will be replaced by CRLF", which
+# makes diffs noisy and can flip whole files.
+#
+# Text is stored LF in the repository; Git checks it out natively per platform.
+* text=auto eol=lf
+
+# Files whose content is byte-significant, or which a tool owns.
+*.avsc      text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sql       text eol=lf
+*.graphql   text eol=lf
+
+# The fixed-width custody extract is position-sensitive: a CRLF would add a
+# byte to every record and break the 200-character layout the parser asserts.
+*.dat       binary
+
+# Never touched by Git's EOL machinery.
+*.png       binary
+*.jpg       binary
+*.pyd       binary
+*.so        binary
+*.whl       binary

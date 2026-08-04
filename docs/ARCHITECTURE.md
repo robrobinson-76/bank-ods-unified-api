@@ -12,7 +12,7 @@ This is a local development prototype, not a production system.
 
 ## Core Pattern
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │  Pydantic Models  (bank_ods/models/)                        │
 │                                                             │
@@ -52,7 +52,7 @@ This is a local development prototype, not a production system.
 
 ## System Overview
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                             Transport Layer                                  │
 │                                                                              │
@@ -124,7 +124,7 @@ for its design and [PLAN-ingestion.md](PLAN-ingestion.md) for what was built.
 
 ## Project Layout
 
-```
+```text
 mongo-mcp-test/
 ├── docs/
 │   ├── ARCHITECTURE.md             ← this file
@@ -576,6 +576,7 @@ All service functions are `async def`. All accept and return plain Python dicts 
 ### Error Envelope
 
 Every service function returns one of:
+
 - `{...data fields...}` — success (single item)
 - `{"data": [...], "page_info": {"has_more": bool, "next_cursor": str|null}}` — success (list); data is one page, page_info carries the keyset cursor (see Pagination)
 - `{"data": [...]}` — success (non-paginated aggregation: `get_transaction_summary`)
@@ -827,6 +828,7 @@ The parity harness is the primary contract enforcement mechanism.
 ### Session-Scoped Fixtures
 
 `conftest.py` establishes session-scoped fixtures:
+
 - `db` — Motor database handle; triggers `ensure_indexes()`
 - `first_account`, `first_security`, `dual_listed_security`, `first_balance`, `first_settled_txn` — fetched from seeded DB; known-good test anchors (`dual_listed_security` guarantees ≥2 listings)
 - `rest_client` — `httpx.AsyncClient` with ASGI transport (no network)
@@ -900,6 +902,7 @@ rather than conflicting.
 Structured JSON logging via `configure_logging(LOG_LEVEL)` in `logging_config.py`. All output to stdout.
 
 Each HTTP request produces:
+
 ```json
 {"level": "INFO", "logger": "bank_ods.http", "msg": "{\"method\": \"GET\", \"path\": \"/accounts\", \"status\": 200, \"duration_ms\": 12.3}"}
 ```

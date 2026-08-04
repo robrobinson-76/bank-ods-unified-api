@@ -56,6 +56,7 @@ Singular (`get_account`) takes an ID and returns one record. Plural (`get_transa
 Fetch a single account by its account ID.
 
 **Parameters:**
+
 - `account_id: str` — e.g., `"ACC-0001"`
 
 **Returns:** Full account document or `{"error": ..., "code": "NOT_FOUND"}`
@@ -67,6 +68,7 @@ Fetch a single account by its account ID.
 List accounts with optional filters. Every account embeds its client-master snapshot under `client` (clientId, clientName, LEI, KYC status, risk rating, tax residencies).
 
 **Parameters:**
+
 - `client_id: str` *(optional)* — matches `client.clientId`
 - `status: str` *(optional)* — `"ACTIVE"`, `"SUSPENDED"`, or `"CLOSED"`
 - `lei: str` *(optional)* — 20-char ISO 17442 Legal Entity Identifier (`client.lei`)
@@ -85,6 +87,7 @@ List accounts with optional filters. Every account embeds its client-master snap
 Fetch a single security (instrument master record) by its security ID.
 
 **Parameters:**
+
 - `security_id: str` — e.g., `"SEC-000001"`
 
 **Returns:** Full security document (including market-level `listings`) or `{"error": ..., "code": "NOT_FOUND"}`
@@ -96,6 +99,7 @@ Fetch a single security (instrument master record) by its security ID.
 Fetch the security carrying a given market-level SEDOL. SEDOLs are allocated one per listing market (and per traded currency), so any listing's SEDOL — primary or secondary — resolves to the same parent security.
 
 **Parameters:**
+
 - `sedol: str` — 7-char LSEG SEDOL, e.g., `"B1WXR90"`
 
 **Returns:** Full security document with all its listings, or NOT_FOUND
@@ -107,6 +111,7 @@ Fetch the security carrying a given market-level SEDOL. SEDOLs are allocated one
 List securities with optional filters. Use this to resolve a `securityId` seen on positions/transactions into its full instrument details.
 
 **Parameters:**
+
 - `asset_class: str` *(optional)* — `"EQUITY"`, `"GOVT_BOND"`, `"CORP_BOND"`, `"FUND"`, `"CASH"`
 - `ticker: str` *(optional)* — e.g., `"AAPL"`
 - `status: str` *(optional)* — `"ACTIVE"`, `"MATURED"`, `"DELISTED"`
@@ -123,6 +128,7 @@ List securities with optional filters. Use this to resolve a `securityId` seen o
 #### `get_transaction`
 
 **Parameters:**
+
 - `transaction_id: str`
 
 **Returns:** Full transaction document or NOT_FOUND
@@ -134,6 +140,7 @@ List securities with optional filters. Use this to resolve a `securityId` seen o
 Query transactions for an account over a date range.
 
 **Parameters:**
+
 - `account_id: str` — required
 - `from_date: str` — `"YYYY-MM-DD"`
 - `to_date: str` — `"YYYY-MM-DD"`
@@ -151,6 +158,7 @@ Query transactions for an account over a date range.
 Aggregate transaction counts and net amounts grouped by type and status. Use this instead of fetching all transactions and counting client-side.
 
 **Parameters:**
+
 - `account_id: str`
 - `from_date: str`
 - `to_date: str`
@@ -166,6 +174,7 @@ Aggregate transaction counts and net amounts grouped by type and status. Use thi
 Fetch one position for a specific account, security, and date.
 
 **Parameters:**
+
 - `account_id: str`
 - `security_id: str`
 - `as_of_date: str` — `"YYYY-MM-DD"`
@@ -177,6 +186,7 @@ Fetch one position for a specific account, security, and date.
 Fetch all security holdings for an account on a given date.
 
 **Parameters:**
+
 - `account_id: str`
 - `as_of_date: str` — `"YYYY-MM-DD"`
 - `limit: int` *(optional, default 50, max 200)*
@@ -191,6 +201,7 @@ Fetch all security holdings for an account on a given date.
 Return EOD position snapshots for one security over a date range.
 
 **Parameters:**
+
 - `account_id: str`
 - `security_id: str`
 - `from_date: str`
@@ -207,6 +218,7 @@ Return EOD position snapshots for one security over a date range.
 #### `get_settlement`
 
 **Parameters:**
+
 - `settlement_id: str`
 
 ---
@@ -216,6 +228,7 @@ Return EOD position snapshots for one security over a date range.
 Look up the settlement linked to a transaction. Use this when you have a transaction ID and want to know its settlement outcome — do not construct settlement IDs manually.
 
 **Parameters:**
+
 - `transaction_id: str`
 
 **Returns:** Full settlement document (including statusHistory) or NOT_FOUND
@@ -227,6 +240,7 @@ Look up the settlement linked to a transaction. Use this when you have a transac
 Query settlements for an account on a specific settlement date.
 
 **Parameters:**
+
 - `account_id: str`
 - `settlement_date: str` — `"YYYY-MM-DD"`
 - `status: str` *(optional)* — `"PENDING"`, `"INSTRUCTED"`, `"MATCHED"`, `"SETTLED"`, `"FAILED"`, `"CANCELLED"`, `"RECYCLED"`
@@ -242,6 +256,7 @@ Query settlements for an account on a specific settlement date.
 Find all failed settlements within a date window. Use for operational monitoring and reconciliation.
 
 **Parameters:**
+
 - `from_date: str`
 - `to_date: str`
 - `account_id: str` *(optional)* — scope to one account
@@ -257,6 +272,7 @@ Find all failed settlements within a date window. Use for operational monitoring
 #### `get_cash_balance`
 
 **Parameters:**
+
 - `account_id: str`
 - `currency: str` — ISO 4217, e.g., `"USD"`, `"CAD"`
 - `as_of_date: str` — `"YYYY-MM-DD"`
@@ -270,6 +286,7 @@ Find all failed settlements within a date window. Use for operational monitoring
 Fetch all currency balances for an account on a given date.
 
 **Parameters:**
+
 - `account_id: str`
 - `as_of_date: str`
 - `limit: int` *(optional, default 50, max 200)*
@@ -282,6 +299,7 @@ Fetch all currency balances for an account on a given date.
 #### `get_projected_balance`
 
 **Parameters:**
+
 - `account_id: str`
 - `currency: str`
 - `as_of_date: str`
@@ -442,7 +460,7 @@ Change-data-capture logs from the legacy CRM database. **These are append-only e
 
 Always use ISO 8601 full date format:
 
-```
+```text
 ✓  "2025-03-31"
 ✗  "31/03/2025"
 ✗  "March 31, 2025"
@@ -514,7 +532,7 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Discover then fetch
 
-```
+```text
 1. list_accounts(status="ACTIVE", limit=5)
    → pick an accountId from result["data"][0]["accountId"]
 
@@ -523,7 +541,7 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Transaction investigation
 
-```
+```text
 1. get_transactions(account_id, from_date, to_date, status="FAILED")
 2. get_settlement_status(transaction_id=txn["transactionId"])
    → inspect statusHistory
@@ -531,28 +549,28 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Portfolio snapshot
 
-```
+```text
 1. get_positions(account_id, as_of_date)       → securities held
 2. get_cash_balances(account_id, as_of_date)   → cash across currencies
 ```
 
 ### Cash flow analysis
 
-```
+```text
 1. get_transaction_summary(account_id, from_date, to_date)   → aggregated by type/status
 2. get_projected_balance(account_id, currency, as_of_date)   → forward-looking cash
 ```
 
 ### Settlement risk
 
-```
+```text
 1. get_settlement_fails(from_date, to_date)                          → all accounts
 2. get_settlement_fails(from_date, to_date, account_id=target)       → scoped
 ```
 
 ### Resolve a mainframe SEDOL to a security
 
-```
+```text
 1. get_security_by_sedol(sedol="B1WXR90")
    → parent security with all listings; find the matching listing for
      settlement location / traded currency
@@ -560,7 +578,7 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Client-scoped account discovery
 
-```
+```text
 1. list_accounts(lei="549300...")          → all accounts of a legal entity
 2. list_accounts(domicile="CA")            → accounts of Canadian-domiciled clients
    → client-master details (domicile, tax residencies, KYC) are embedded
@@ -569,7 +587,7 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Release monitoring (ops server — for an AI agent watching a deployment)
 
-```
+```text
 1. run_release_checks()                        → PASS: done. FAIL: alert now.
 2. On WARN → read checks[].detail:
    - custody_reconciliation → reconcile_custody_feed()   → per-record reasons
@@ -581,7 +599,7 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Feed investigation: "why is this record missing?" (ops server)
 
-```
+```text
 1. reconcile_custody_feed(cycle_date="20260708")
    → find the record's REC_ID among issues[]; reason tells you where it broke:
      UNKNOWN_ACCOUNT     → account mapping problem (check POS_ACCT_NBR)
@@ -594,7 +612,7 @@ An empty list result is not an error: `{"data": [], "page_info": {"has_more": fa
 
 ### Feed health triage: "is ingestion broken?" (ops server)
 
-```
+```text
 1. get_ingestion_status()                      → which feed is STALE or NEVER_LANDED
 2. get_dlq_summary()                           → were records rejected, and with what error?
      non-zero count → the feed IS arriving but records are failing the contract;
@@ -612,7 +630,7 @@ and a feed can be perfectly fresh while quietly dead-lettering everything.
 
 ### Raw records for a specific account (ops server)
 
-```
+```text
 1. get_account(account_id="ACC-000007")        → confirm the account (consumer server)
 2. find_raw_records("raw_custody_positions", "POS_ACCT_NBR", "000000000007")
    → all raw feed records for that account, wire-format values
@@ -628,7 +646,7 @@ and a feed can be perfectly fresh while quietly dead-lettering everything.
 
 All 8 list tools use keyset cursor pagination with a uniform `limit: int = 50` (max 200) and `cursor: str | None`:
 
-```
+```python
 # Page 1
 page = get_transactions(account_id, from_date, to_date, limit=50)
 
