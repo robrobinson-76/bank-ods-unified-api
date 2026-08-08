@@ -1,0 +1,454 @@
+<title>Graphify Fit Assessment — Three Estate Archetypes</title>
+<style>
+  :root {
+    --bg: #F6F8F6;
+    --surface: #FFFFFF;
+    --surface-2: #EDF1EE;
+    --ink: #1F2823;
+    --ink-soft: #4A564F;
+    --ink-faint: #75817A;
+    --line: #D5DDD7;
+    --accent: #0E6E5C;
+    --accent-soft: #E1EEEA;
+    --good: #0E6E5C;
+    --warn: #A67318;
+    --warn-soft: #F5ECD8;
+    --bad: #B3423A;
+    --bad-soft: #F6E2E0;
+    --good-soft: #E1EEEA;
+    --mono-bg: #EDF1EE;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #141A17;
+      --surface: #1B221E;
+      --surface-2: #232B27;
+      --ink: #E3E9E5;
+      --ink-soft: #ADB8B1;
+      --ink-faint: #7E8A83;
+      --line: #313B35;
+      --accent: #41BFA0;
+      --accent-soft: #1E3730;
+      --good: #41BFA0;
+      --warn: #D9A544;
+      --warn-soft: #38301B;
+      --bad: #E07A72;
+      --bad-soft: #3D2523;
+      --good-soft: #1E3730;
+      --mono-bg: #232B27;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #141A17;
+    --surface: #1B221E;
+    --surface-2: #232B27;
+    --ink: #E3E9E5;
+    --ink-soft: #ADB8B1;
+    --ink-faint: #7E8A83;
+    --line: #313B35;
+    --accent: #41BFA0;
+    --accent-soft: #1E3730;
+    --good: #41BFA0;
+    --warn: #D9A544;
+    --warn-soft: #38301B;
+    --bad: #E07A72;
+    --bad-soft: #3D2523;
+    --good-soft: #1E3730;
+    --mono-bg: #232B27;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: Charter, "Bitstream Charter", "Iowan Old Style", Georgia, serif;
+    font-size: 16.5px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 0;
+  }
+  .wrap {
+    max-width: 74rem;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 5rem;
+  }
+  .col { max-width: 46rem; }
+
+  h1, h2, h3, .sans {
+    font-family: "Segoe UI", "Avenir Next", system-ui, -apple-system, sans-serif;
+  }
+  h1 {
+    font-size: 2rem;
+    line-height: 1.15;
+    letter-spacing: -0.015em;
+    margin: 0.4rem 0 0.6rem;
+    text-wrap: balance;
+  }
+  h2 {
+    font-size: 1.3rem;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.9rem;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: 1.02rem;
+    margin: 0 0 0.5rem;
+  }
+  p { margin: 0 0 1rem; }
+  section { margin-top: 3rem; }
+
+  .eyebrow {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--accent);
+  }
+  .meta {
+    color: var(--ink-faint);
+    font-size: 0.85rem;
+    font-family: "Segoe UI", system-ui, sans-serif;
+  }
+  .lede { font-size: 1.08rem; color: var(--ink-soft); }
+
+  code, .mono {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 0.86em;
+    background: var(--mono-bg);
+    border-radius: 4px;
+    padding: 0.08em 0.35em;
+  }
+
+  /* Verdict strip */
+  .verdicts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 1rem;
+    margin-top: 1.8rem;
+  }
+  .vcard {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.1rem 1.2rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+  .vcard h3 { margin: 0; font-size: 0.98rem; }
+  .vcard p { margin: 0; font-size: 0.9rem; color: var(--ink-soft); line-height: 1.5; }
+  .chip {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.22em 0.65em;
+    border-radius: 99px;
+    align-self: flex-start;
+  }
+  .chip.good { background: var(--good-soft); color: var(--good); }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .chip.bad  { background: var(--bad-soft);  color: var(--bad); }
+
+  /* Token model table */
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .tablewrap { overflow-x: auto; margin: 1.2rem 0; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+  th, td {
+    text-align: left;
+    padding: 0.65rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  th {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 0.74rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--ink-faint);
+    background: var(--surface-2);
+  }
+  td { color: var(--ink-soft); }
+  td strong { color: var(--ink); }
+
+  /* Use-case sections */
+  .case {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 1.8rem 1.8rem 1.5rem;
+    margin-top: 2rem;
+  }
+  .case-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.4rem;
+  }
+  .case-head h2 { margin: 0; }
+  .case .context { color: var(--ink-soft); font-size: 0.95rem; margin-bottom: 1.2rem; }
+
+  .proscons {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.2rem;
+    margin: 1.2rem 0;
+  }
+  .pclist h3 {
+    font-size: 0.74rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 0.6rem;
+  }
+  .pclist.pro h3 { color: var(--good); }
+  .pclist.con h3 { color: var(--bad); }
+  .pclist ul { margin: 0; padding: 0; list-style: none; }
+  .pclist li {
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    padding: 0.45rem 0 0.45rem 1.1rem;
+    position: relative;
+    border-bottom: 1px solid var(--line);
+  }
+  .pclist li:last-child { border-bottom: none; }
+  .pclist li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.98em;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+  .pclist.pro li::before { background: var(--good); }
+  .pclist.con li::before { background: var(--bad); }
+  .pclist li strong { color: var(--ink); }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    padding: 0.85rem 1.1rem;
+    font-size: 0.93rem;
+    color: var(--ink);
+    margin: 1.2rem 0 0.4rem;
+  }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-soft); }
+  .callout.bad  { border-left-color: var(--bad);  background: var(--bad-soft); }
+  .callout .label {
+    font-family: "Segoe UI", system-ui, sans-serif;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    display: block;
+    margin-bottom: 0.25rem;
+  }
+  .callout.warn .label { color: var(--warn); }
+  .callout.bad .label { color: var(--bad); }
+  .callout:not(.warn):not(.bad) .label { color: var(--accent); }
+
+  .footnote {
+    margin-top: 3rem;
+    padding-top: 1.2rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.82rem;
+    color: var(--ink-faint);
+  }
+  .footnote a { color: var(--accent); }
+  hr.sep { border: none; border-top: 1px solid var(--line); margin: 2.6rem 0; }
+</style>
+
+<div class="wrap">
+  <header class="col">
+    <div class="eyebrow">Tool Fit Assessment</div>
+    <h1>Graphify across three estate archetypes</h1>
+    <p class="meta">Prepared for Rob Robinson &middot; 2026-08-08 &middot; Sources: graphify.com, Graphify-Labs/graphify README &amp; docs (Apache&nbsp;2.0, ~103k stars)</p>
+    <p class="lede">Graphify turns codebases into local, queryable knowledge graphs served to AI assistants over MCP. Code is parsed deterministically (tree-sitter AST, zero model calls); everything else is model-read. That one split — plus who pays tokens, and when — decides which of your three estates it fits.</p>
+  </header>
+
+  <section>
+    <h2 class="col">Verdicts at a glance</h2>
+    <div class="verdicts">
+      <div class="vcard">
+        <span class="chip bad">Poor fit</span>
+        <h3>COBOL mainframe · 4–5M lines</h3>
+        <p>COBOL is not among the 36 tree-sitter grammars. The system either isn't graphed at all, or costs tens of millions of tokens for low-confidence inferred edges. Wrong tool for this job.</p>
+      </div>
+      <div class="vcard">
+        <span class="chip good">Strongest fit</span>
+        <h3>100-repo J2EE + microservices estate</h3>
+        <p>This is what the multi-repo global index was built for. Java parses free and deterministically; index dormant repos once, query impact across all 100. Caveat: the J2EE wiring (XML, JSP) is exactly what falls to model-inferred edges.</p>
+      </div>
+      <div class="vcard">
+        <span class="chip warn">Marginal — conditional</span>
+        <h3>Active monorepo · Java or Python</h3>
+        <p>Re-indexing is token-free (pure AST) but manual. Under heavy churn a stale graph gives confidently wrong answers with citations. Worth it only if re-scan is automated and it's used for architecture/impact work, not daily edits.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="col">
+    <h2>The token cost model</h2>
+    <p>Token spend is not one number — it happens at three different moments, and only some file types incur it at all.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Moment</th><th>What costs tokens</th><th>What's free</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Index time</strong></td>
+          <td>Non-code files only: docs, PDFs, SQL, Postgres schemas, Terraform, XML/config. These are read by <em>your configured model</em> — i.e. it comes out of your Claude usage — and edges are tagged <code>INFERRED</code>. <code>--mode deep</code> spends more for more aggressive relationship extraction.</td>
+          <td>All code in the 36 supported languages (Java, Python, TS, Go, C#, Kotlin, Scala&hellip;): tree-sitter AST, on-device, <strong>zero model calls</strong>, edges tagged <code>EXTRACTED</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Re-index</strong></td>
+          <td>Only <em>changed</em> non-code files on <code>--update</code>.</td>
+          <td>Code re-scans, however frequent — CPU time, not tokens.</td>
+        </tr>
+        <tr>
+          <td><strong>Query time</strong></td>
+          <td>Graph query results entering the assistant's context — but these are compact paths with <code>file:line</code> citations.</td>
+          <td>Relative to the alternative: <strong>this is where Graphify saves tokens</strong>. Answering "what depends on X across the estate" by grepping and reading files across 100 repos costs vastly more context than one graph query — when it's even possible.</td>
+        </tr>
+      </tbody>
+    </table></div>
+    <p>Net: an estate that is <em>mostly supported code</em> indexes essentially free and pays for itself in cheaper queries. An estate that is <em>mostly unsupported code or config</em> pays real token bills for its most important edges — or gets no edges at all.</p>
+  </section>
+
+  <hr class="sep">
+
+  <section>
+    <div class="case">
+      <div class="case-head">
+        <h2>Use case 1 — COBOL mainframe, 4–5M lines, rarely touched, impact checking</h2>
+        <span class="chip bad">Poor fit</span>
+      </div>
+      <p class="context">The profile sounds ideal — static system, one-time index, occasional high-stakes impact questions. The language support kills it.</p>
+      <div class="proscons">
+        <div class="pclist pro">
+          <h3>What works in its favor</h3>
+          <ul>
+            <li><strong>Static estate</strong> — whatever index cost exists is one-time; the staleness problem barely applies.</li>
+            <li><strong>On-device, no telemetry</strong> — attractive for the compliance posture that usually surrounds mainframe code.</li>
+            <li><strong>Surrounding artifacts</strong> — it could still graph the documentation, runbooks, and interface specs <em>around</em> the mainframe, which has some value.</li>
+          </ul>
+        </div>
+        <div class="pclist con">
+          <h3>What breaks it</h3>
+          <ul>
+            <li><strong>COBOL is not a supported grammar.</strong> The 36 tree-sitter languages are modern (the only legacy nod is regex-based Pascal/Delphi). COBOL files are either skipped — no graph, no value — or fall to model reading.</li>
+            <li><strong>If model-read, the bill is enormous.</strong> 4–5M lines is on the order of 50–75M input tokens per full pass (rough estimate at ~12–15 tokens/line), for edges that are all <code>INFERRED</code> — the low-confidence kind.</li>
+            <li><strong>Impact analysis here is safety-critical.</strong> "Confidently cited but model-guessed" is precisely the failure mode you can't accept when checking blast radius on a system nobody dares touch.</li>
+            <li><strong>Mainframe semantics are absent.</strong> Copybooks, JCL job flows, CICS transactions, DB2 bindings — none of it is modeled. That's most of what "impact" means on this system.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout bad">
+        <span class="label">Recommendation</span>
+        Don't use Graphify here. This niche has purpose-built tooling — IBM ADDI / watsonx Code Assistant for Z, Rocket (Micro Focus) Enterprise Analyzer, CAST Imaging — that understands copybooks and JCL natively. If budget for those is the blocker, a bespoke parse (COBOL grammars exist outside tree-sitter) feeding a graph DB beats forcing this tool.
+      </div>
+    </div>
+
+    <div class="case">
+      <div class="case-head">
+        <h2>Use case 2 — 100 repos: microservices + legacy J2EE, upgrade impact across connections</h2>
+        <span class="chip good">Strongest fit</span>
+      </div>
+      <p class="context">Cross-repo impact analysis over a mostly-dormant estate is the single scenario where Graphify's design choices all point the right way — with one structural caveat about where J2EE keeps its wiring.</p>
+      <div class="proscons">
+        <div class="pclist pro">
+          <h3>Pros</h3>
+          <ul>
+            <li><strong>Purpose-built multi-repo workflow.</strong> <code>graphify extract &lt;repo&gt; --global --as name</code> registers each repo into one cross-project index; <code>merge-graphs</code> combines graphs; <code>global list/remove</code> manages the fleet.</li>
+            <li><strong>Java indexes free.</strong> The bulk of the estate (Java source, both legacy and microservice) is deterministic AST — the 100-repo index costs CPU, not tokens.</li>
+            <li><strong>Dormant repos = index once.</strong> Repos of "various status" that never change never need re-scanning. The manual-update pain is near zero for this estate.</li>
+            <li><strong>Biggest query-time token savings of the three cases.</strong> No assistant can grep 100 repos into context. One graph query answering "who calls this API / imports this artifact" replaces an exploration that's otherwise impractical, not just expensive.</li>
+            <li><strong>Upgrade-planning queries are the native use.</strong> <code>shortest_path</code>, <code>god_nodes</code>, dependency fan-out — this is the impact-across-connections question stated directly.</li>
+            <li><strong>Citations keep it auditable.</strong> Every claimed dependency comes with <code>file:line</code> and an <code>EXTRACTED</code>/<code>INFERRED</code> tag, so upgrade plans can be spot-verified.</li>
+          </ul>
+        </div>
+        <div class="pclist con">
+          <h3>Cons</h3>
+          <ul>
+            <li><strong>J2EE hides its wiring in exactly the unsupported files.</strong> <code>web.xml</code>, Spring XML, EJB descriptors, <code>pom.xml</code>, JSP — none are tree-sitter grammars. They're model-read (token cost) and produce <code>INFERRED</code> edges — and in old J2EE those files <em>are</em> the connection map.</li>
+            <li><strong>Cross-service runtime edges aren't in any AST.</strong> REST calls, JMS queues, shared databases connect services at runtime; the graph can only infer these from strings and config, or miss them.</li>
+            <li><strong>One-time token bill for the config layer.</strong> Modest per repo, but across 100 repos of XML-heavy legacy it's real. It is, at least, one-time.</li>
+            <li><strong>Scale limits.</strong> The graph is a JSON file with a 512&nbsp;MiB cap (overridable via <code>GRAPHIFY_MAX_GRAPH_BYTES</code>) loaded in memory — 100 repos may press against both.</li>
+            <li><strong>You script the loop.</strong> No "scan this folder of repos" command; a wrapper over 100 directories is on you (trivial, but someone owns it).</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout">
+        <span class="label">Recommendation</span>
+        Pilot before committing: index ~10 representative repos (mix of J2EE and microservice), then test it against <em>one dependency chain you already know to be true</em> — ideally one that runs through XML config. If the inferred edges capture it, scale to the full 100 and make the graph the standard first step of every upgrade-impact assessment. If they don't, you've learned the tool sees your Java but not your wiring, at the cost of an afternoon.
+      </div>
+    </div>
+
+    <div class="case">
+      <div class="case-head">
+        <h2>Use case 3 — single modern app, monorepo (Java or Python), heavy active development</h2>
+        <span class="chip warn">Marginal — conditional</span>
+      </div>
+      <p class="context">Token economics are fine here; the problem is operational. The graph is only as good as its last scan, and this is the one estate where the last scan is always going out of date.</p>
+      <div class="proscons">
+        <div class="pclist pro">
+          <h3>Pros</h3>
+          <ul>
+            <li><strong>Re-indexing costs zero tokens.</strong> Java and Python are both fully deterministic; re-scan as often as you like for CPU time only. <code>--update</code> is incremental.</li>
+            <li><strong>Architecture queries stay useful.</strong> <code>god_nodes</code>, layering checks, boundary-violation detection, dead-code fan-in — better answered from an AST graph than from grep, and provable with citations.</li>
+            <li><strong>Deep call-chain questions save context.</strong> "Route → service → table" traces via one graph query instead of the assistant reading a dozen files into context.</li>
+            <li><strong>Docs/SQL token cost is small at single-repo scale</strong> and only recurs for changed files.</li>
+          </ul>
+        </div>
+        <div class="pclist con">
+          <h3>Cons</h3>
+          <ul>
+            <li><strong>Staleness is the trap.</strong> No auto-refresh; under heavy multi-dev churn the graph drifts within hours. A stale graph answers <em>confidently, with citations, wrongly</em> — worse than an honest grep miss.</li>
+            <li><strong>Marginal over native assistant search.</strong> On one repo the team knows well, the assistant's own grep/read loop already works; the graph mostly accelerates the hardest 10% of questions.</li>
+            <li><strong>Process overhead.</strong> Someone must wire <code>--update</code> into post-merge/pull hooks or CI, and the team must trust-but-verify until the habit sticks.</li>
+            <li><strong>Another MCP server in context.</strong> Ten more tool schemas in every session — small, but nonzero against the token savings.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout warn">
+        <span class="label">Recommendation</span>
+        Adopt only with automation: a post-merge hook (or CI artifact) that runs <code>graphify . --update</code> so no human ever decides to re-scan. Scope its use to architecture reviews, refactor impact checks, and onboarding — not routine edits. Without the automation, skip it; a graph nobody refreshes is a liability with a nice query interface.
+      </div>
+    </div>
+  </section>
+
+  <section class="col">
+    <h2>Factors beyond tokens</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Factor</th><th>Assessment</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Trust model</strong></td><td>The <code>EXTRACTED</code> / <code>INFERRED</code> tag on every edge is the tool's best feature — it tells you which answers are proof and which are guesses. Enforce a team norm: upgrade/impact decisions cite <code>EXTRACTED</code> edges or get manually verified.</td></tr>
+        <tr><td><strong>Privacy / compliance</strong></td><td>Code never leaves the machine; no account, no telemetry; query logging off by default. Clean posture for regulated estates.</td></tr>
+        <tr><td><strong>Supply chain</strong></td><td>Naming is messy: PyPI package is <code>graphifyy</code> (double-y); the README warns other <code>graphify*</code> packages are unaffiliated, and multiple sites/repos circulate. Verify the package character-by-character and pin the version.</td></tr>
+        <tr><td><strong>Operational ceiling</strong></td><td>JSON graph, 512&nbsp;MiB cap, in-memory load. Fine per-repo; watch it at 100-repo merged scale.</td></tr>
+        <tr><td><strong>Windows</strong></td><td>Tree-sitter wheels are generally fine, but long-path limits (260-char) on deep repo trees are a known local hazard — sanity-check one large repo before batch-indexing.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section class="col">
+    <h2>Bottom line</h2>
+    <p><strong>Deploy it on the 100-repo estate</strong> — that's the scenario the tool was designed for and where token economics are most favorable: free deterministic indexing of the Java bulk, one-time model cost for the config layer, and query-time savings on a class of question that's otherwise impractical. Pilot on 10 repos and validate inferred XML edges first.</p>
+    <p><strong>Conditionally adopt on the active monorepo</strong> — only with an automated post-merge re-scan, and scoped to architecture and impact work.</p>
+    <p><strong>Keep it away from the mainframe.</strong> No COBOL grammar means no deterministic graph; the model-read fallback is both the most expensive and least trustworthy path, on the system where wrong answers cost the most. Use mainframe-native analysis tooling there.</p>
+  </section>
+
+  <p class="footnote">
+    Sources: <a href="https://graphify.com/">graphify.com</a> &middot; <a href="https://github.com/Graphify-Labs/graphify">Graphify-Labs/graphify README</a> &middot; <a href="https://graphify.com/docs">graphify.com/docs</a>. Token-per-line figures are order-of-magnitude estimates (~12–15 tokens/line of source); language support and command details verified against the README on 2026-08-08. Graphify is Apache-2.0 open source; no pricing tier exists — all token costs flow through your own assistant/API usage.
+  </p>
+</div>
